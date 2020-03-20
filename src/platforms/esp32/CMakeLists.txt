@@ -30,6 +30,7 @@ set(SOURCES
 #../common/cdcacm.c 
 ../common/swdptap.c
 ../common/jtagtap.c
+../common/timing.c
 ../../gdb_main.c
 ../../command.c  
 ../../crc32.c  
@@ -42,7 +43,6 @@ set(SOURCES
 ../../main.c  
 ../../morse.c  
 traceswo.c
-timing.c
 platform.c
 gdb_if.c)
 

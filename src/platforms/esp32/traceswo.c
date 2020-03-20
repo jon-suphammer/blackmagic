@@ -1,7 +1,7 @@
 /*
  * This file is part of the Black Magic Debug project.
  *
- * Copyright (C) 2019  Olof Åstrand.
+ * Copyright (C) 2020  Olof Åstrand.
  * Written by Olof Åstrand <olof.astrand@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify

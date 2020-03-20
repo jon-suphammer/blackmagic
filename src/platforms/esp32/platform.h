@@ -39,9 +39,6 @@
 #include "timing.h"
 #include "driver/gpio.h"
 
-//#define LWIP_OPEN_SRC
-//#include <espressif/esp_common.h>
-//#include <esp8266.h>
 #include <freertos/FreeRTOS.h>
 
 #define TMS_SET_MODE() do { } while (0)
