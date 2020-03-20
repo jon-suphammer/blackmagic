@@ -118,7 +118,8 @@ static void cl_help(char **argv, BMP_CL_OPTIONS_t *opt)
 	printf("\t-s \"string\"\t: Use dongle with (partial) "
 		  "serial number \"string\"\n");
 	printf("\t-c \"string\"\t: Use ftdi dongle with type \"string\"\n");
-	printf("\t-n\t\t:  Exit immediate if no device found\n");
+	printf("\t-C\t\t: Connect under reset\n");
+	printf("\t-n\t\t: Exit immediate if no device found\n");
 	printf("\tRun mode related options:\n");
 	printf("\t-t\t\t: Scan SWD, with no target found scan jtag and exit\n");
 	printf("\t-E\t\t: Erase flash until flash end or for given size\n");
@@ -143,7 +144,7 @@ void cl_init(BMP_CL_OPTIONS_t *opt, int argc, char **argv)
 	opt->opt_target_dev = 1;
 	opt->opt_flash_start = 0x08000000;
 	opt->opt_flash_size = 16 * 1024 *1024;
-	while((c = getopt(argc, argv, "Ehv::s:c:nN:tVta:S:jprR")) != -1) {
+	while((c = getopt(argc, argv, "Ehv::s:c:CnN:tVta:S:jprR")) != -1) {
 		switch(c) {
 		case 'c':
 			if (optarg)
@@ -158,6 +159,9 @@ void cl_init(BMP_CL_OPTIONS_t *opt, int argc, char **argv)
 			break;
 		case 'j':
 			opt->opt_usejtag = true;
+			break;
+		case 'C':
+			opt->opt_connect_under_reset = true;
 			break;
 		case 'n':
 			opt->opt_no_wait = true;
@@ -224,6 +228,14 @@ void cl_init(BMP_CL_OPTIONS_t *opt, int argc, char **argv)
 	}
 }
 
+static void display_target(int i, target *t, void *context)
+{
+	(void)context;
+	DEBUG("*** %2d   %c  %s %s\n", i, target_attached(t)?'*':' ',
+		  target_driver_name(t),
+		  (target_core_name(t)) ? target_core_name(t): "");
+}
+
 int cl_execute(BMP_CL_OPTIONS_t *opt)
 {
 	int res = -1;
@@ -235,6 +247,10 @@ int cl_execute(BMP_CL_OPTIONS_t *opt)
 		platform_delay(500);
 	}
 #endif
+	if (opt->opt_connect_under_reset)
+		printf("Connecting under reset\n");
+	connect_assert_srst = opt->opt_connect_under_reset;
+	platform_srst_set_val(opt->opt_connect_under_reset);
 	if (opt->opt_mode == BMP_MODE_TEST)
 		printf("Running in Test Mode\n");
 	if (opt->opt_usejtag) {
@@ -245,6 +261,8 @@ int cl_execute(BMP_CL_OPTIONS_t *opt)
 	if (!num_targets) {
 		DEBUG("No target found\n");
 		return res;
+	} else {
+		target_foreach(display_target, NULL);
 	}
 	if (opt->opt_mode == BMP_MODE_TEST)
 			return 0;
@@ -252,8 +270,7 @@ int cl_execute(BMP_CL_OPTIONS_t *opt)
 		DEBUG("Given target nummer %d not available\n", opt->opt_target_dev);
 		return res;
 	}
-	struct target_controller tc = {NULL};
-	target *t = target_attach_n(opt->opt_target_dev, &tc);
+	target *t = target_attach_n(opt->opt_target_dev, NULL);
 	if (!t) {
 		DEBUG("Can not attach to target %d\n", opt->opt_target_dev);
 		goto target_detach;
