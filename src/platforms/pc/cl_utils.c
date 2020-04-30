@@ -22,13 +22,13 @@
  * binary file from the command line.
  */
 
+#include "general.h"
 #include <unistd.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 
-#include "general.h"
 #include "target.h"
 #include "target_internal.h"
 
@@ -38,6 +38,7 @@
 #define O_BINARY 0
 #endif
 #if defined(_WIN32) || defined(__CYGWIN__)
+# include <windows.h>
 #else
 # include <sys/mman.h>
 #endif
@@ -52,6 +53,9 @@ struct mmap_data {
 	int fd;
 #endif
 };
+int cl_debuglevel;
+static struct mmap_data map; /* Portable way way to nullify the struct!*/
+
 
 static int bmp_mmap(char *file, struct mmap_data *map)
 {
@@ -115,6 +119,7 @@ static void cl_help(char **argv, BMP_CL_OPTIONS_t *opt)
 	printf("Usage: %s [options]\n", argv[0]);
 	printf("\t-h\t\t: This help.\n");
 	printf("\t-v[1|2]\t\t: Increasing verbosity\n");
+	printf("\t-d \"path\"\t: Use serial device at \"path\"\n");
 	printf("\t-s \"string\"\t: Use dongle with (partial) "
 		  "serial number \"string\"\n");
 	printf("\t-c \"string\"\t: Use ftdi dongle with type \"string\"\n");
@@ -144,7 +149,7 @@ void cl_init(BMP_CL_OPTIONS_t *opt, int argc, char **argv)
 	opt->opt_target_dev = 1;
 	opt->opt_flash_start = 0x08000000;
 	opt->opt_flash_size = 16 * 1024 *1024;
-	while((c = getopt(argc, argv, "Ehv::s:c:CnN:tVta:S:jprR")) != -1) {
+	while((c = getopt(argc, argv, "Ehv::d:s:c:CnN:tVta:S:jprR")) != -1) {
 		switch(c) {
 		case 'c':
 			if (optarg)
@@ -155,7 +160,9 @@ void cl_init(BMP_CL_OPTIONS_t *opt, int argc, char **argv)
 			break;
 		case 'v':
 			if (optarg)
-				opt->opt_debuglevel = strtol(optarg, NULL, 0);
+				cl_debuglevel = strtol(optarg, NULL, 0);
+			else
+				cl_debuglevel = -1;
 			break;
 		case 'j':
 			opt->opt_usejtag = true;
@@ -165,6 +172,10 @@ void cl_init(BMP_CL_OPTIONS_t *opt, int argc, char **argv)
 			break;
 		case 'n':
 			opt->opt_no_wait = true;
+			break;
+		case 'd':
+			if (optarg)
+				opt->opt_device = optarg;
 			break;
 		case 's':
 			if (optarg)
@@ -253,6 +264,7 @@ int cl_execute(BMP_CL_OPTIONS_t *opt)
 	platform_srst_set_val(opt->opt_connect_under_reset);
 	if (opt->opt_mode == BMP_MODE_TEST)
 		printf("Running in Test Mode\n");
+	printf("Target voltage: %s Volt\n", platform_target_voltage());
 	if (opt->opt_usejtag) {
 		num_targets = jtag_scan(NULL);
 	} else {
@@ -276,7 +288,6 @@ int cl_execute(BMP_CL_OPTIONS_t *opt)
 		goto target_detach;
 	}
 	int read_file = -1;
-	struct mmap_data map = {0};
 	if ((opt->opt_mode == BMP_MODE_FLASH_WRITE) ||
 		(opt->opt_mode == BMP_MODE_FLASH_VERIFY)) {
 		int mmap_res = bmp_mmap(opt->opt_flash_file, &map);

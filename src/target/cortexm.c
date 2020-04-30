@@ -3,10 +3,10 @@
  *
  * Copyright (C) 2012  Black Sphere Technologies Ltd.
  * Written by Gareth McMullin <gareth@blacksphere.co.nz>
+ * and Koen De Vleeschauwer.
  *
  * This program is free software: you can redistribute it and/or modify
- * it under tSchreibe Objekte: 100% (21/21), 3.20 KiB | 3.20 MiB/s, Fertig.
-he terms of the GNU General Public License as published by
+ * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
@@ -53,11 +53,12 @@ const struct command_s cortexm_cmd_list[] = {
 static void cortexm_regs_read(target *t, void *data);
 static void cortexm_regs_write(target *t, const void *data);
 static uint32_t cortexm_pc_read(target *t);
-ssize_t cortexm_reg_read(target *t, int reg, void *data, size_t max);
-ssize_t cortexm_reg_write(target *t, int reg, const void *data, size_t max);
+static ssize_t cortexm_reg_read(target *t, int reg, void *data, size_t max);
+static ssize_t cortexm_reg_write(target *t, int reg, const void *data, size_t max);
 
 static void cortexm_reset(target *t);
 static enum target_halt_reason cortexm_halt_poll(target *t, target_addr *watch);
+static void cortexm_halt_resume(target *t, bool step);
 static void cortexm_halt_request(target *t);
 static int cortexm_fault_unwind(target *t);
 
@@ -549,7 +550,7 @@ int cortexm_mem_write_sized(
 	return target_check_error(t);
 }
 
-int dcrsr_regnum(target *t, unsigned reg)
+static int dcrsr_regnum(target *t, unsigned reg)
 {
 	if (reg < sizeof(regnum_cortex_m) / 4) {
 		return regnum_cortex_m[reg];
@@ -561,7 +562,7 @@ int dcrsr_regnum(target *t, unsigned reg)
 		return -1;
 	}
 }
-ssize_t cortexm_reg_read(target *t, int reg, void *data, size_t max)
+static ssize_t cortexm_reg_read(target *t, int reg, void *data, size_t max)
 {
 	if (max < 4)
 		return -1;
@@ -571,7 +572,7 @@ ssize_t cortexm_reg_read(target *t, int reg, void *data, size_t max)
 	return 4;
 }
 
-ssize_t cortexm_reg_write(target *t, int reg, const void *data, size_t max)
+static ssize_t cortexm_reg_write(target *t, int reg, const void *data, size_t max)
 {
 	if (max < 4)
 		return -1;
@@ -598,36 +599,43 @@ static void cortexm_pc_write(target *t, const uint32_t val)
  * using the core debug registers in the NVIC. */
 static void cortexm_reset(target *t)
 {
+	/* Read DHCSR here to clear S_RESET_ST bit before reset */
+	target_mem_read32(t, CORTEXM_DHCSR);
+	platform_timeout to;
 	if ((t->target_options & CORTEXM_TOPT_INHIBIT_SRST) == 0) {
 		platform_srst_set_val(true);
 		platform_srst_set_val(false);
+		/* Some NRF52840 users saw invalid SWD transaction with
+		 * native/firmware without this delay.*/
+		platform_delay(10);
 	}
-
-	/* Read DHCSR here to clear S_RESET_ST bit before reset */
-	target_mem_read32(t, CORTEXM_DHCSR);
-
-	/* Request system reset from NVIC: SRST doesn't work correctly */
-	/* This could be VECTRESET: 0x05FA0001 (reset only core)
-	 *          or SYSRESETREQ: 0x05FA0004 (system reset)
-	 */
-	target_mem_write32(t, CORTEXM_AIRCR,
-	                   CORTEXM_AIRCR_VECTKEY | CORTEXM_AIRCR_SYSRESETREQ);
-
+	uint32_t dhcsr = target_mem_read32(t, CORTEXM_DHCSR);
+	if ((dhcsr & CORTEXM_DHCSR_S_RESET_ST) == 0) {
+		/* No reset seen yet, maybe as SRST is not connected, or device has
+         * CORTEXM_TOPT_INHIBIT_SRST set.
+		 * Trigger reset by AIRCR.*/
+		target_mem_write32(t, CORTEXM_AIRCR,
+						   CORTEXM_AIRCR_VECTKEY | CORTEXM_AIRCR_SYSRESETREQ);
+	}
 	/* If target needs to do something extra (see Atmel SAM4L for example) */
 	if (t->extended_reset != NULL) {
 		t->extended_reset(t);
 	}
-
-	/* Poll for release from reset */
-	while (target_mem_read32(t, CORTEXM_DHCSR) & CORTEXM_DHCSR_S_RESET_ST);
-
+	/* Wait for CORTEXM_DHCSR_S_RESET_ST to read 0, meaning reset released.*/
+	platform_timeout_set(&to, 1000);
+	while ((target_mem_read32(t, CORTEXM_DHCSR) & CORTEXM_DHCSR_S_RESET_ST) &&
+		   !platform_timeout_is_expired(&to));
+#if defined(PLATFORM_HAS_DEBUG)
+	if (platform_timeout_is_expired(&to))
+		DEBUG("Reset seem to be stuck low!\n");
+#endif
+	/* 10 ms delay to ensure that things such as the STM32 HSI clock
+	 * have started up fully. */
+	platform_delay(10);
 	/* Reset DFSR flags */
 	target_mem_write32(t, CORTEXM_DFSR, CORTEXM_DFSR_RESETALL);
-
-	/* 1ms delay to ensure that things such as the stm32f1 HSI clock have started
-	 * up fully.
-	 */
-	platform_delay(1);
+	/* Make sure we ignore any initial DAP error */
+	target_check_error(t);
 }
 
 static void cortexm_halt_request(target *t)
@@ -706,7 +714,7 @@ static enum target_halt_reason cortexm_halt_poll(target *t, target_addr *watch)
 	return TARGET_HALT_BREAKPOINT;
 }
 
-void cortexm_halt_resume(target *t, bool step)
+static void cortexm_halt_resume(target *t, bool step)
 {
 	struct cortexm_priv *priv = t->priv;
 	uint32_t dhcsr = CORTEXM_DHCSR_DBGKEY | CORTEXM_DHCSR_C_DEBUGEN;
@@ -1001,11 +1009,14 @@ static bool cortexm_vector_catch(target *t, int argc, char *argv[])
 #endif
 
 /* Semihosting support */
-/* ARM Semihosting syscall numbers, from ARM doc DUI0471C, Chapter 8 */
-#define SYS_CLOSE	0x02
+/* ARM Semihosting syscall numbers, from "Semihosting for AArch32 and AArch64 Version 3.0" */
+
 #define SYS_CLOCK	0x10
+#define SYS_CLOSE	0x02
 #define SYS_ELAPSED	0x30
 #define SYS_ERRNO	0x13
+#define SYS_EXIT	0x18
+#define SYS_EXIT_EXTENDED	0x20
 #define SYS_FLEN	0x0C
 #define SYS_GET_CMDLINE	0x15
 #define SYS_HEAPINFO	0x16
@@ -1025,6 +1036,28 @@ static bool cortexm_vector_catch(target *t, int argc, char *argv[])
 #define SYS_WRITEC	0x03
 #define SYS_WRITE0	0x04
 
+#if !defined(PC_HOSTED)
+/* probe memory access functions */
+static void probe_mem_read(target *t __attribute__((unused)), void *probe_dest, target_addr target_src, size_t len)
+{
+	uint8_t *dst = (uint8_t *)probe_dest;
+	uint8_t *src = (uint8_t *)target_src;
+
+	DEBUG("probe_mem_read\n");
+	while (len--) *dst++=*src++;
+	return;
+}
+
+static void probe_mem_write(target *t __attribute__((unused)), target_addr target_dest, const void *probe_src, size_t len)
+{
+	uint8_t *dst = (uint8_t *)target_dest;
+	uint8_t *src = (uint8_t *)probe_src;
+
+	DEBUG("probe_mem_write\n");
+	while (len--) *dst++=*src++;
+	return;
+}
+#endif
 static int cortexm_hostio_request(target *t)
 {
 	uint32_t arm_regs[t->regs_size];
@@ -1065,6 +1098,7 @@ static int cortexm_hostio_request(target *t)
 			ret++;
 			break;
 		}
+		/* FIXME handle requests for special filename ':semihosting-features' */
 
 		ret = tc_open(t, params[0], params[2] + 1, pflag, 0644);
 		if (ret != -1)
@@ -1085,8 +1119,24 @@ static int cortexm_hostio_request(target *t)
 			ret = params[2] - ret;
 		break;
 	case SYS_WRITEC: /* writec */
-		ret = tc_write(t, 2, arm_regs[1], 1);
+		ret = tc_write(t, STDERR_FILENO, arm_regs[1], 1);
 		break;
+	case SYS_WRITE0:{ /* write0 */
+		ret = -1;
+		target_addr str_begin = arm_regs[1];
+		target_addr str_end = str_begin;
+		while (target_mem_read8(t, str_end) != 0) {
+			if (target_check_error(t)) break;
+			str_end++;
+			}
+		int len = str_end - str_begin;
+		if (len != 0) {
+			int rc = tc_write(t, STDERR_FILENO, str_begin, len);
+			if (rc != len) break;
+		}
+		ret = 0;
+		break;
+		}
 	case SYS_ISTTY:	/* isatty */
 		ret = tc_isatty(t, params[0] - 1);
 		break;
@@ -1104,17 +1154,102 @@ static int cortexm_hostio_request(target *t)
 		ret = tc_system(t, params[0] - 1, params[1] + 1);
 		break;
 
-	case SYS_FLEN:	/* Not supported, fake success */
-		t->tc->errno_ = 0;
-		break;
+	case SYS_FLEN:
+#if defined(PC_HOSTED)
+		 t->tc->errno_ = 0;
+		 break;
+#else
+		 {	/* file length */
+			 ret = -1;
+			 uint32_t fio_stat[16]; /* same size as fio_stat in gdb/include/gdb/fileio.h */
+			 //DEBUG("SYS_FLEN fio_stat addr %p\n", fio_stat);
+			 void (*saved_mem_read)(target *t, void *dest, target_addr src, size_t len);
+			 void (*saved_mem_write)(target *t, target_addr dest, const void *src, size_t len);
+			 saved_mem_read = t->mem_read;
+			 saved_mem_write = t->mem_write;
+			 t->mem_read = probe_mem_read;
+			 t->mem_write = probe_mem_write;
+			 int rc = tc_fstat(t, params[0] - 1, (target_addr)fio_stat); /* write fstat() result in fio_stat[] */
+			 t->mem_read = saved_mem_read;
+			 t->mem_write = saved_mem_write;
+			 if (rc) break; /* tc_fstat() failed */
+			 uint32_t fst_size_msw = fio_stat[7]; /* most significant 32 bits of fst_size in fio_stat */
+			 uint32_t fst_size_lsw = fio_stat[8]; /* least significant 32 bits of fst_size in fio_stat */
+			 if (fst_size_msw != 0) break; /* file size too large for uint32_t return type */
+			 ret = __builtin_bswap32(fst_size_lsw); /* convert from bigendian to target order */
+			 break;
+		 }
 
+	case SYS_TIME: { /* gettimeofday */
+		ret = -1;
+		uint32_t fio_timeval[3]; /* same size as fio_timeval in gdb/include/gdb/fileio.h */
+		//DEBUG("SYS_TIME fio_timeval addr %p\n", fio_timeval);
+		void (*saved_mem_read)(target *t, void *dest, target_addr src, size_t len);
+		void (*saved_mem_write)(target *t, target_addr dest, const void *src, size_t len);
+		saved_mem_read = t->mem_read;
+		saved_mem_write = t->mem_write;
+		t->mem_read = probe_mem_read;
+		t->mem_write = probe_mem_write;
+		int rc = tc_gettimeofday(t, (target_addr) fio_timeval, (target_addr) NULL); /* write gettimeofday() result in fio_timeval[] */
+		t->mem_read = saved_mem_read;
+		t->mem_write = saved_mem_write;
+		if (rc) break; /* tc_gettimeofday() failed */
+		uint32_t ftv_sec = fio_timeval[0]; /* time in seconds, first field in fio_timeval */
+		ret = __builtin_bswap32(ftv_sec); /* convert from bigendian to target order */
+		break;
+		}
+
+	case SYS_READC: { /* readc */
+		uint8_t ch;
+		//DEBUG("SYS_READC ch addr %p\n", &ch);
+		void (*saved_mem_read)(target *t, void *dest, target_addr src, size_t len);
+		void (*saved_mem_write)(target *t, target_addr dest, const void *src, size_t len);
+		saved_mem_read = t->mem_read;
+		saved_mem_write = t->mem_write;
+		t->mem_read = probe_mem_read;
+		t->mem_write = probe_mem_write;
+		int rc = tc_read(t, params[0] - 1, (target_addr) &ch, 1); /* read a character in ch */
+		t->mem_read = saved_mem_read;
+		t->mem_write = saved_mem_write;
+		if (rc == 1) ret = ch;
+		else ret = -1;
+		break;
+		}
+#endif
 	case SYS_ERRNO: /* Return last errno from GDB */
 		ret = t->tc->errno_;
 		break;
 
-	case SYS_TIME:	/* gettimeofday */
-		/* FIXME How do we use gdb's gettimeofday? */
+	case SYS_EXIT: /* _exit() */
+		tc_printf(t, "_exit(0x%x)\n", params[0]);
+		target_halt_resume(t, 1);
+		ret = 0;
 		break;
+
+	case SYS_GET_CMDLINE: { /* get_cmdline */
+		uint32_t retval[2];
+		ret = -1;
+		target_addr buf_ptr = params[0];
+		target_addr buf_len = params[1];
+		if (strlen(t->cmdline)+1 > buf_len) break;
+		if(target_mem_write(t, buf_ptr, t->cmdline, strlen(t->cmdline)+1)) break;
+		retval[0] = buf_ptr;
+		retval[1] = strlen(t->cmdline)+1;
+		if(target_mem_write(t, arm_regs[1], retval, sizeof(retval))) break;
+		ret = 0;
+		break;
+		}
+
+	// not implemented yet:
+	case SYS_HEAPINFO: /* heapinfo */
+	case SYS_CLOCK: /* clock */
+	case SYS_ELAPSED: /* elapsed */
+	case SYS_ISERROR: /* iserror */
+	case SYS_TICKFREQ: /* tickfreq */
+	case SYS_TMPNAM: /* tmpnam */
+		ret = -1;
+		break;
+
 	}
 
 	arm_regs[0] = ret;
