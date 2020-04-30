@@ -31,6 +31,7 @@
 #include <assert.h>
 #include <sys/time.h>
 #include <sys/unistd.h>
+#include <esp_timer.h>
 
 //#include "esp/uart.h"
 
@@ -47,6 +48,7 @@
 #define AP_SSID	 "blackmagic"
 #define AP_PSK	 "blackmagic"
 
+//  | (1<<MY_DEBUG_PIN)
 #define GPIO_OUTPUT_PIN_SEL  ((1<<SWCLK_PIN) | (1<<SWDIO_PIN))
 
 
@@ -91,7 +93,9 @@ const char *platform_target_voltage(void)
 
 uint32_t platform_time_ms(void)
 {
-	return xTaskGetTickCount() / portTICK_PERIOD_MS;
+	//return xTaskGetTickCount() / portTICK_PERIOD_MS;
+	int64_t time_milli=esp_timer_get_time()/1000;
+	return((uint32_t)time_milli);
 }
 
 #define vTaskDelayMs(ms)	vTaskDelay((ms)/portTICK_PERIOD_MS)
@@ -131,5 +135,5 @@ void main_task(void *parameters)
 
 void user_init(void)
 {
-	xTaskCreate(&main_task, "main", 4*256, NULL, 2, NULL);
+	xTaskCreate(&main_task, "main", 4*1024, NULL, 2, NULL);
 }

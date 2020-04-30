@@ -5,27 +5,33 @@ This provides a wifi based, debug probe on the esp32
 
 # Build
 
+Set ssid and password in main.c
+
 . $HOME/esp/esp-idf/export.sh
 
 ./build-esp32.sh
 
-# Based on this port
-https://github.com/markrages/blackmagic/tree/a1d5386ce43189f0ac23300bea9b4d9f26869ffb/src/platforms/esp8266
+# Flash
+
+./run-esp32.sh  /dev/ttyUSB1
+
+# Pins
 
 
-So
+So Pins are changed in platform.h
+
 ```
-GND on ESP32 connects to GND on the RAK board, opposite to the boot pins
-PIN 23 on ESP32 connects to SWD_CLK
-PIN 17 on ESP32 connects to SWD_TMS
+GND on ESP32 connects to GND on the target board
+PIN 13 on ESP32 connects to SWD_CLK
+PIN 14 on ESP32 connects to SWD_TMS
 ```
 Pins are changed in platform.h
 
 ```
 I (3119) event: sta ip: 192.168.1.117, mask: 255.255.255.0, gw: 192.168.1.1
 I (3119) blackmagic: Connected to AP
-I (3119) gpio: GPIO[17]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 
-I (3129) gpio: GPIO[23]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 
+I (3119) gpio: GPIO[13]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 
+I (3129) gpio: GPIO[24]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 
 ```
 
 
@@ -48,9 +54,6 @@ https://github.com/blacksphere/blackmagic/wiki/Frequently-Asked-Questions
 (gdb) attach 1
 
 ```
-
-Works like charm.
-
 
 # Quicker download
 ```

@@ -35,6 +35,7 @@
 #define SET_IDLE_STATE(state)
 #define SET_ERROR_STATE(state)
 #define DEBUG(x, ...) do { ; } while (0)
+//#define DEBUG printf
 
 #include "timing.h"
 #include "driver/gpio.h"
@@ -43,24 +44,30 @@
 
 #define TMS_SET_MODE() do { } while (0)
 
+#if 1
 // no-connects on ESP-01: 12,13,14,15
 #define TMS_PIN (17) // no-connects on ESP-01 OLAS, WAS 2
 #define TDI_PIN (13) // "
 #define TDO_PIN (14) // "
-#define TCK_PIN (3) // "
+#define TCK_PIN (16) // "
 // 2 is GPIO2, broken out
 // 3 is RXD
 
-#define PLATFORM_HAS_TRACESWO 1
+#define PLATFORM_HAS_TRACESWO 0
 #define TRACESWO_PIN 13
 // Workaround for driver
 #define TRACESWO_DUMMY_TX 19
+#endif
 
 // ON ESP32 we dont have the PORTS, this is dummy value until code is corrected
 #define SWCLK_PORT  0
 
-#define SWDIO_PIN (17)
-#define SWCLK_PIN (23)
+#define SWDIO_PIN (14)
+#define SWCLK_PIN (13)
+
+// Allow debugging by toggling the pin
+//#define MY_DEBUG_PIN (12)
+
 
 #define gpio_set_val(port, pin, value) do {	\
 		gpio_set_level(pin, value);		\
@@ -85,6 +92,6 @@
            gpio_set_direction(SWDIO_PIN, GPIO_MODE_OUTPUT);		\
 	} while (0)
 
-#define PLATFORM_HAS_DEBUG // do we?
-
+//#define PLATFORM_HAS_DEBUG  1/
+//#define ENABLE_DEBUG 1
 #endif

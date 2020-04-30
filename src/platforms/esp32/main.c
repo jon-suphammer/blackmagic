@@ -55,10 +55,13 @@ unsigned short gdb_port = 2345;
    If you'd rather not, just change the below entries to strings with
    the config you want - ie #define EXAMPLE_WIFI_SSID "mywifissid"
 */
+//#include "secret.i"
+
 #define EXAMPLE_WIFI_SSID "ssid"
 //CONFIG_WIFI_SSID
 #define EXAMPLE_WIFI_PASS "password"
 //CONFIG_WIFI_PASSWORD
+
 #define EXAMPLE_ESP_MAXIMUM_RETRY 3
 
 /* FreeRTOS event group to signal when we are connected & ready to make a request */
@@ -152,13 +155,8 @@ void wifi_init_sta(void)
 
     ESP_ERROR_CHECK(esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler));
     ESP_ERROR_CHECK(esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler));
-    vEventGroupDelete(wifi_event_group);
 }
 
-#ifdef PLATFORM_HAS_TRACESWO
-
-
-#endif
 
 void gdb_application_thread(void *pvParameters)
 {
@@ -197,6 +195,14 @@ void main_task(void *parameters);
 
 void app_main()
 {
+    // All pins have outputs disabled at startup.
+    // For use with sigrok, it is possible to use the JTAG interface for debugging with sigrock.
+    // 
+    // PIN13 = ADBUS0      TCK
+    // PIN12 = ADBUS1      TDI
+    // PIN15 = ADBUS2      TDO
+    // PIN14 = ADBUS3      TMS
+
 
    //Initialize NVS
     esp_err_t ret = nvs_flash_init();
@@ -217,23 +223,10 @@ void app_main()
 
     xTaskCreate(&gdb_application_thread, "gdb_thread", 4*4096, NULL, 17, NULL);
 
+    vEventGroupDelete(wifi_event_group);
 
-   //xTaskCreate(&main_task, "main_task", 4*4096, NULL, 17, NULL);
+    //xTaskCreate(&main_task, "main_task", 4*4096, NULL, 17, NULL);
 
-
-#if 0
-	while (true) {
-		volatile struct exception e;
-		TRY_CATCH(e, EXCEPTION_ALL) {
-			gdb_main();
-		}
-		if (e.type) {
-			gdb_putpacketz("EFF");
-			target_list_free();
-			morse("TARGET LOST.", 1);
-		}
-	}
-#endif
 	/* Should never get here */
 	return;
 }
