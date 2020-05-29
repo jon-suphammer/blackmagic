@@ -49,8 +49,7 @@
 #define AP_PSK	 "blackmagic"
 
 //  | (1<<MY_DEBUG_PIN)
-#define GPIO_OUTPUT_PIN_SEL  ((1<<SWCLK_PIN) | (1<<SWDIO_PIN))
-
+#define GPIO_OUTPUT_PIN_SEL  ((1<<SWCLK_PIN) | (1<<SWDIO_PIN) | (1<<TMS_PIN) | (1<<TDI_PIN) | (1<<TDO_PIN) | (1<<TCK_PIN))
 
 void pins_init() {
 
@@ -59,7 +58,7 @@ void pins_init() {
     io_conf.intr_type = GPIO_PIN_INTR_DISABLE;
     //set as output mode
     io_conf.mode = GPIO_MODE_OUTPUT;
-    //bit mask of the pins that you want to set,e.g.GPIO15/17
+    //bit mask of the pins that you want to set
     io_conf.pin_bit_mask = GPIO_OUTPUT_PIN_SEL;
     //disable pull-down mode
     io_conf.pull_down_en = 0;

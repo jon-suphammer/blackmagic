@@ -42,7 +42,7 @@ set(SOURCES
 ../../hex_utils.c  
 ../../main.c  
 ../../morse.c  
-traceswo.c
+#traceswo.c
 platform.c
 gdb_if.c)
 

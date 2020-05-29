@@ -45,15 +45,14 @@
 #define TMS_SET_MODE() do { } while (0)
 
 #if 1
-// no-connects on ESP-01: 12,13,14,15
-#define TMS_PIN (17) // no-connects on ESP-01 OLAS, WAS 2
-#define TDI_PIN (13) // "
-#define TDO_PIN (14) // "
-#define TCK_PIN (16) // "
-// 2 is GPIO2, broken out
-// 3 is RXD
 
-#define PLATFORM_HAS_TRACESWO 0
+#define TMS_PIN (17) 
+#define TDI_PIN (13) 
+#define TDO_PIN (14) 
+#define TCK_PIN (16) 
+
+
+#undef PLATFORM_HAS_TRACESWO 
 #define TRACESWO_PIN 13
 // Workaround for driver
 #define TRACESWO_DUMMY_TX 19
