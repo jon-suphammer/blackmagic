@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.5)
 
 project(esp32_blackmagic C)
 
+add_definitions(-DPC_HOSTED=0)
+
 set(SUPPORTED_TARGETS esp32)
     # Include for ESP-IDF build system functions
     include($ENV{IDF_PATH}/tools/cmake/idf.cmake)
@@ -30,7 +32,7 @@ set(SOURCES
 #../common/cdcacm.c 
 ../common/swdptap.c
 ../common/jtagtap.c
-../common/timing.c
+#../common/timing.c
 ../../gdb_main.c
 ../../command.c  
 ../../crc32.c  

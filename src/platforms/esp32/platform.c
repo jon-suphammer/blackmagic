@@ -136,3 +136,15 @@ void user_init(void)
 {
 	xTaskCreate(&main_task, "main", 4*1024, NULL, 2, NULL);
 }
+
+
+
+void platform_timeout_set(platform_timeout *t, uint32_t ms)
+{
+	t->time = platform_time_ms() + ms;
+}
+
+bool platform_timeout_is_expired(platform_timeout *t)
+{
+	return platform_time_ms() > t->time;
+}
