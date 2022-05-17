@@ -1,7 +1,7 @@
 /*
  * This file is part of the Black Magic Debug project.
  *
- * Copyright (C) 2020 Uwe Bonnes (bon@elektron.ikp.physik.tu-darmstadt.de)
+ * Copyright (C) 2020- 2021 Uwe Bonnes (bon@elektron.ikp.physik.tu-darmstadt.de)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,7 +21,6 @@
  */
 
 #include "general.h"
-#include "swdptap.h"
 #include "jtagtap.h"
 #include "target.h"
 #include "target_internal.h"
@@ -32,42 +31,26 @@
 #include <signal.h>
 
 #include "bmp_remote.h"
+#include "bmp_hosted.h"
 #include "stlinkv2.h"
 #include "ftdi_bmp.h"
 #include "jlink.h"
 #include "cmsis_dap.h"
-
-#define VENDOR_ID_BMP            0x1d50
-#define PRODUCT_ID_BMP           0x6018
-
-#define VENDOR_ID_STLINK         0x0483
-#define PRODUCT_ID_STLINK_MASK   0xffe0
-#define PRODUCT_ID_STLINK_GROUP  0x3740
-#define PRODUCT_ID_STLINKV1      0x3744
-#define PRODUCT_ID_STLINKV2      0x3748
-#define PRODUCT_ID_STLINKV21     0x374b
-#define PRODUCT_ID_STLINKV21_MSD 0x3752
-#define PRODUCT_ID_STLINKV3      0x374f
-#define PRODUCT_ID_STLINKV3E     0x374e
-
-#define VENDOR_ID_SEGGER         0x1366
+#include "cl_utils.h"
 
 bmp_info_t info;
 
-swd_proc_t swd_proc;
 jtag_proc_t jtag_proc;
+
+void gdb_ident(char *p, int count)
+{
+	snprintf(p, count, "%s (%s), %s", info.manufacturer, info.product,
+			 info.version);
+}
 
 static void exit_function(void)
 {
-	if(info.usb_link) {
-		libusb_free_transfer(info.usb_link->req_trans);
-		libusb_free_transfer(info.usb_link->rep_trans);
-		if (info.usb_link->ul_libusb_device_handle) {
-			libusb_release_interface (
-				info.usb_link->ul_libusb_device_handle, 0);
-			libusb_close(info.usb_link->ul_libusb_device_handle);
-		}
-	}
+	libusb_exit_function(&info);
 	switch (info.bmp_type) {
 	case BMP_TYPE_CMSIS_DAP:
 		dap_exit_function();
@@ -85,190 +68,36 @@ static void sigterm_handler(int sig)
 	exit(0);
 }
 
-static int find_debuggers(	BMP_CL_OPTIONS_t *cl_opts,bmp_info_t *info)
-{
-	libusb_device **devs;
-	int n_devs = libusb_get_device_list(info->libusb_ctx, &devs);
-    if (n_devs < 0) {
-        DEBUG_WARN( "WARN:libusb_get_device_list() failed");
-		return -1;
-	}
-	bool report = false;
-	int found_debuggers;
-	struct libusb_device_descriptor desc;
-	char serial[64];
-	char manufacturer[128];
-	char product[128];
-	bmp_type_t type = BMP_TYPE_NONE;
-	bool access_problems = false;
-  rescan:
-	found_debuggers = 0;
-	for (int i = 0;  devs[i]; i++) {
-		libusb_device *dev =  devs[i];
-		int res = libusb_get_device_descriptor(dev, &desc);
-		if (res < 0) {
-            DEBUG_WARN( "WARN: libusb_get_device_descriptor() failed: %s",
-					libusb_strerror(res));
-			libusb_free_device_list(devs, 1);
-			continue;
-		}
-		libusb_device_handle *handle;
-		res = libusb_open(dev, &handle);
-		if (res != LIBUSB_SUCCESS) {
-			if (!access_problems) {
-				DEBUG_INFO("INFO: Open USB %04x:%04x failed\n",
-						   desc.idVendor, desc.idProduct);
-				access_problems = true;
-			}
-			continue;
-		}
-		res = libusb_get_string_descriptor_ascii(
-			handle, desc.iSerialNumber, (uint8_t*)serial,
-			sizeof(serial));
-		if (res <= 0) {
-			/* This can fail for many devices. Continue silent!*/
-			libusb_close(handle);
-			continue;
-		}
-		if (cl_opts->opt_serial && !strstr(serial, cl_opts->opt_serial)) {
-			libusb_close(handle);
-			continue;
-		}
-		res = libusb_get_string_descriptor_ascii(
-			handle, desc.iManufacturer, (uint8_t*)manufacturer,
-			sizeof(manufacturer));
-		if (res > 0) {
-			res = libusb_get_string_descriptor_ascii(
-				handle, desc.iProduct, (uint8_t*)product,
-				sizeof(product));
-			if (res <= 0) {
-				DEBUG_WARN( "WARN:"
-						"libusb_get_string_descriptor_ascii "
-						"for ident_string failed: %s\n",
-						libusb_strerror(res));
-				libusb_close(handle);
-				continue;
-			}
-		}
-		libusb_close(handle);
-		if (cl_opts->opt_ident_string) {
-			char *match_manu = NULL;
-			char *match_product = NULL;
-			match_manu = strstr(manufacturer,	cl_opts->opt_ident_string);
-			match_product = strstr(product, cl_opts->opt_ident_string);
-			if (!match_manu && !match_product) {
-				continue;
-			}
-		}
-		/* Either serial and/or ident_string match or are not given.
-		 * Check type.*/
-		if ((desc.idVendor == VENDOR_ID_BMP) &&
-			(desc.idProduct == PRODUCT_ID_BMP)) {
-			type = BMP_TYPE_BMP;
-		} else if (desc.idVendor ==  VENDOR_ID_STLINK) {
-			if ((desc.idProduct == PRODUCT_ID_STLINKV2) ||
-				(desc.idProduct == PRODUCT_ID_STLINKV21) ||
-				(desc.idProduct == PRODUCT_ID_STLINKV21_MSD) ||
-				(desc.idProduct == PRODUCT_ID_STLINKV3) ||
-				(desc.idProduct == PRODUCT_ID_STLINKV3E)) {
-				type = BMP_TYPE_STLINKV2;
-			} else {
-				if (desc.idProduct == PRODUCT_ID_STLINKV1)
-					DEBUG_WARN( "INFO: STLINKV1 not supported\n");
-				continue;
-			}
-		} else if ((strstr(manufacturer, "CMSIS")) || (strstr(product, "CMSIS"))) {
-			type = BMP_TYPE_CMSIS_DAP;
-		} else if (desc.idVendor ==  VENDOR_ID_SEGGER) {
-			type = BMP_TYPE_JLINK;
-		} else{
-			continue;
-		}
-		found_debuggers ++;
-		if (report) {
-			DEBUG_WARN("%2d: %s, %s, %s\n", found_debuggers,
-				   serial,
-				   manufacturer,product);
-		}
-		info->vid = desc.idVendor;
-		info->pid = desc.idProduct;
-		info->bmp_type = type;
-		strncpy(info->serial, serial, sizeof(info->serial));
-		strncpy(info->product, product, sizeof(info->product));
-		strncpy(info->manufacturer, manufacturer, sizeof(info->manufacturer));
-		if (cl_opts->opt_position &&
-			(cl_opts->opt_position == found_debuggers)) {
-			found_debuggers = 1;
-			break;
-		}
-	}
-	if ((found_debuggers > 1) ||
-		((found_debuggers == 1) && (cl_opts->opt_list_only))) {
-		if (!report) {
-			if (found_debuggers > 1)
-				DEBUG_WARN("%d debuggers found!\nSelect with -P <pos>, "
-						   "-s <(partial)serial no.> "
-						   "and/or -S <(partial)description>\n",
-						   found_debuggers);
-			report = true;
-			goto rescan;
-		} else {
-			if (found_debuggers > 0)
-				access_problems = false;
-			found_debuggers = 0;
-		}
-	}
-	if (!found_debuggers && access_problems)
-		DEBUG_WARN(
-			"No debugger found. Please check access rights to USB devices!\n");
-	libusb_free_device_list(devs, 1);
-	return (found_debuggers == 1) ? 0 : -1;
-}
+static	BMP_CL_OPTIONS_t cl_opts;
 
 void platform_init(int argc, char **argv)
 {
-	BMP_CL_OPTIONS_t cl_opts = {0};
-	cl_opts.opt_idstring = "Blackmagic PC-Hosted";
 	cl_init(&cl_opts, argc, argv);
 	atexit(exit_function);
 	signal(SIGTERM, sigterm_handler);
 	signal(SIGINT, sigterm_handler);
-	int res = libusb_init(&info.libusb_ctx);
-	if (res) {
-		DEBUG_WARN( "Fatal: Failed to get USB context: %s\n",
-				libusb_strerror(res));
-		exit(-1);
-	}
-	if (cl_opts.opt_device) {
+	if (cl_opts.opt_device)
 		info.bmp_type = BMP_TYPE_BMP;
-	} else if (cl_opts.opt_cable) {
-		/* check for libftdi devices*/
-		res = ftdi_bmp_init(&cl_opts, &info);
-		if (res)
-			exit(-1);
-		else
-			info.bmp_type = BMP_TYPE_LIBFTDI;
-	} else if (find_debuggers(&cl_opts, &info)) {
+	else if (find_debuggers(&cl_opts, &info))
 		exit(-1);
-	}
-	DEBUG_WARN("Using %04x:%04x %s %s %s\n", info.vid, info.pid, info.serial,
-		   info.manufacturer,
-		   info.product);
+	bmp_ident(&info);
 	switch (info.bmp_type) {
 	case BMP_TYPE_BMP:
 		if (serial_open(&cl_opts, info.serial))
 			exit(-1);
-		remote_init(true);
+		remote_init();
 		break;
 	case BMP_TYPE_STLINKV2:
-		if (stlink_init( &info))
+		if (stlink_init(&info))
 			exit(-1);
 		break;
 	case BMP_TYPE_CMSIS_DAP:
-		if (dap_init( &info))
+		if (dap_init(&info))
 			exit(-1);
 		break;
 	case BMP_TYPE_LIBFTDI:
+		if (ftdi_bmp_init(&cl_opts, &info))
+			exit(-1);
 		break;
 	case BMP_TYPE_JLINK:
 		if (jlink_init(&info))
@@ -277,45 +106,35 @@ void platform_init(int argc, char **argv)
 	default:
 		exit(-1);
 	}
-	int ret = -1;
-	if (cl_opts.opt_mode != BMP_MODE_DEBUG) {
-		ret = cl_execute(&cl_opts);
-	} else {
+	if (cl_opts.opt_mode != BMP_MODE_DEBUG)
+		exit(cl_execute(&cl_opts));
+	else {
 		gdb_if_init();
 		return;
 	}
-	exit(ret);
 }
 
-int platform_adiv5_swdp_scan(void)
+int platform_adiv5_swdp_scan(uint32_t targetid)
 {
+	info.is_jtag = false;
+	platform_max_frequency_set(cl_opts.opt_max_swj_frequency);
 	switch (info.bmp_type) {
 	case BMP_TYPE_BMP:
 	case BMP_TYPE_LIBFTDI:
-		return adiv5_swdp_scan();
+	case BMP_TYPE_CMSIS_DAP:
+		return adiv5_swdp_scan(targetid);
 		break;
 	case BMP_TYPE_STLINKV2:
 	{
 		target_list_free();
 		ADIv5_DP_t *dp = (void*)calloc(1, sizeof(*dp));
-		if (!stlink_enter_debug_swd(&info, dp)) {
+		if (stlink_enter_debug_swd(&info, dp)) {
+			free(dp);
+		} else {
 			adiv5_dp_init(dp);
 			if (target_list)
 				return 1;
 		}
-		free(dp);
-		break;
-	}
-	case BMP_TYPE_CMSIS_DAP:
-	{
-		target_list_free();
-		ADIv5_DP_t *dp = (void*)calloc(1, sizeof(*dp));
-		if (!dap_enter_debug_swd(dp)) {
-			adiv5_dp_init(dp);
-			if (target_list)
-				return 1;
-		}
-		free(dp);
 		break;
 	}
 	case BMP_TYPE_JLINK:
@@ -326,25 +145,34 @@ int platform_adiv5_swdp_scan(void)
 	return 0;
 }
 
-int platform_swdptap_init(void)
+int swdptap_init(ADIv5_DP_t *dp)
 {
 	switch (info.bmp_type) {
 	case BMP_TYPE_BMP:
-		return remote_swdptap_init(&swd_proc);
-	case BMP_TYPE_STLINKV2:
+		return remote_swdptap_init(dp);
 	case BMP_TYPE_CMSIS_DAP:
+		return dap_swdptap_init(dp);
+	case BMP_TYPE_STLINKV2:
 	case BMP_TYPE_JLINK:
 		return 0;
 	case BMP_TYPE_LIBFTDI:
-		return libftdi_swdptap_init(&swd_proc);
+		return libftdi_swdptap_init(dp);
 	default:
 		return -1;
 	}
 	return -1;
 }
 
+void platform_add_jtag_dev(int i, const jtag_dev_t *jtag_dev)
+{
+	if (info.bmp_type == BMP_TYPE_BMP)
+		remote_add_jtag_dev(i, jtag_dev);
+}
+
 int platform_jtag_scan(const uint8_t *lrlens)
 {
+	info.is_jtag = true;
+	platform_max_frequency_set(cl_opts.opt_max_swj_frequency);
 	switch (info.bmp_type) {
 	case BMP_TYPE_BMP:
 	case BMP_TYPE_LIBFTDI:
@@ -380,8 +208,13 @@ int platform_jtagtap_init(void)
 
 void platform_adiv5_dp_defaults(ADIv5_DP_t *dp)
 {
+	dp->dp_bmp_type = info.bmp_type;
 	switch (info.bmp_type) {
 	case BMP_TYPE_BMP:
+		if (cl_opts.opt_no_hl) {
+			DEBUG_WARN("Not using HL commands\n");
+			return;
+		}
 		return remote_adiv5_dp_defaults(dp);
 	case BMP_TYPE_STLINKV2:
 		return stlink_adiv5_dp_defaults(dp);
@@ -454,6 +287,10 @@ void platform_srst_set_val(bool assert)
 		return remote_srst_set_val(assert);
 	case BMP_TYPE_JLINK:
 		return jlink_srst_set_val(&info, assert);
+	case BMP_TYPE_LIBFTDI:
+		return libftdi_srst_set_val(assert);
+	case BMP_TYPE_CMSIS_DAP:
+		return dap_srst_set_val(assert);
 	default:
 		break;
 	}
@@ -468,10 +305,81 @@ bool platform_srst_get_val(void)
 		return stlink_srst_get_val();
 	case BMP_TYPE_JLINK:
 		return jlink_srst_get_val(&info);
+	case BMP_TYPE_LIBFTDI:
+		return libftdi_srst_get_val();
 	default:
 		break;
 	}
 	return false;
+}
+
+void platform_max_frequency_set(uint32_t freq)
+{
+	if (!freq)
+		return;
+	switch (info.bmp_type) {
+	case BMP_TYPE_BMP:
+		remote_max_frequency_set(freq);
+		break;
+	case BMP_TYPE_CMSIS_DAP:
+		dap_swj_clock(freq);
+		break;
+	case BMP_TYPE_LIBFTDI:
+		libftdi_max_frequency_set(freq);
+		break;
+	case BMP_TYPE_STLINKV2:
+		stlink_max_frequency_set(&info, freq);
+		break;
+	case BMP_TYPE_JLINK:
+		jlink_max_frequency_set(&info, freq);
+		break;
+	default:
+		DEBUG_WARN("Setting max SWJ frequency not yet implemented\n");
+		break;
+	}
+	uint32_t max_freq = platform_max_frequency_get();
+	if (max_freq == FREQ_FIXED)
+		DEBUG_INFO("Device has fixed frequency for %s\n",
+				   (info.is_jtag) ? "JTAG" : "SWD" );
+	else
+		DEBUG_INFO("Speed set to %7.4f MHz for %s\n",
+				   platform_max_frequency_get() / 1000000.0,
+				   (info.is_jtag) ? "JTAG" : "SWD" );
+}
+
+uint32_t platform_max_frequency_get(void)
+{
+	switch (info.bmp_type) {
+	case BMP_TYPE_BMP:
+		return remote_max_frequency_get();
+	case BMP_TYPE_CMSIS_DAP:
+		return dap_swj_clock(0);
+		break;
+	case BMP_TYPE_LIBFTDI:
+		return libftdi_max_frequency_get();
+	case BMP_TYPE_STLINKV2:
+		return stlink_max_frequency_get(&info);
+	case BMP_TYPE_JLINK:
+		return jlink_max_frequency_get(&info);
+	default:
+		DEBUG_WARN("Reading max SWJ frequency not yet implemented\n");
+		break;
+	}
+	return false;
+}
+
+void platform_target_set_power(bool power)
+{
+	switch (info.bmp_type) {
+	case BMP_TYPE_BMP:
+		if (remote_target_set_power(power))
+			DEBUG_INFO("Powering up device!\n");
+		else
+			DEBUG_WARN("Powering up device unimplemented or failed\n");
+	   break;
+	default:
+		break;
+	}
 }
 
 void platform_buffer_flush(void)
@@ -490,33 +398,51 @@ static void ap_decode_access(uint16_t addr, uint8_t RnW)
 		fprintf(stderr, "Read  ");
 	else
 		fprintf(stderr, "Write ");
-	switch(addr) {
-	case 0x00:
-		if (RnW)
-			fprintf(stderr, "DP_DPIDR :");
-		else
-			fprintf(stderr, "DP_ABORT :");
-		break;
-	case 0x004: fprintf(stderr, "CTRL/STAT:");
-		break;
-	case 0x008:
-		if (RnW)
-			fprintf(stderr, "RESEND   :");
-		else
-			fprintf(stderr, "DP_SELECT:");
-		break;
-	case 0x00c: fprintf(stderr, "DP_RDBUFF:");
-		break;
-	case 0x100: fprintf(stderr, "AP_CSW   :");
-		break;
-	case 0x104: fprintf(stderr, "AP_TAR   :");
-		break;
-	case 0x10c: fprintf(stderr, "AP_DRW   :");
-		break;
-	case 0x1f8: fprintf(stderr, "AP_BASE  :");
-		break;
-	case 0x1fc: fprintf(stderr, "AP_IDR   :");
-		break;
+	if (addr < 0x100) {
+		switch(addr) {
+		case 0x00:
+			if (RnW)
+				fprintf(stderr, "DP_DPIDR :");
+			else
+				fprintf(stderr, "DP_ABORT :");
+			break;
+		case 0x04: fprintf(stderr, "CTRL/STAT:");
+			break;
+		case 0x08:
+			if (RnW)
+				fprintf(stderr, "RESEND   :");
+			else
+				fprintf(stderr, "DP_SELECT:");
+			break;
+		case 0x0c: fprintf(stderr, "DP_RDBUFF:");
+			break;
+		default: fprintf(stderr, "Unknown %02x   :", addr);
+		}
+	} else {
+		fprintf(stderr, "AP 0x%02x ", addr >> 8);
+		switch (addr & 0xff) {
+		case 0x00: fprintf(stderr, "CSW   :");
+			break;
+		case 0x04: fprintf(stderr, "TAR   :");
+			break;
+		case 0x0c: fprintf(stderr, "DRW   :");
+			break;
+		case 0x10: fprintf(stderr, "DB0   :");
+			break;
+		case 0x14: fprintf(stderr, "DB1   :");
+			break;
+		case 0x18: fprintf(stderr, "DB2   :");
+			break;
+		case 0x1c: fprintf(stderr, "DB3   :");
+			break;
+		case 0xf8: fprintf(stderr, "BASE  :");
+			break;
+		case 0xf4: fprintf(stderr, "CFG   :");
+			break;
+		case 0xfc: fprintf(stderr, "IDR   :");
+			break;
+		default:   fprintf(stderr, "RSVD%02x:", addr & 0xff);
+		}
 	}
 }
 

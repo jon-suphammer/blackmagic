@@ -26,13 +26,11 @@
  * Should share interface with swdptap.c or at least clean up...
  */
 
-#include <stdio.h>
+#include "general.h"
 #include <unistd.h>
-#include <string.h>
 
 #include <assert.h>
 
-#include "general.h"
 #include "remote.h"
 #include "jtagtap.h"
 #include "bmp_remote.h"
@@ -106,35 +104,58 @@ static void jtagtap_tms_seq(uint32_t MS, int ticks)
     }
 }
 
+/* At least up to v1.7.1-233, remote handles only up to 32 ticks in one
+ * call. Break up large calls.
+ *
+ * FIXME: Provide and test faster call and keep fallback
+ * for old firmware
+ */
 static void jtagtap_tdi_tdo_seq(
 	uint8_t *DO, const uint8_t final_tms, const uint8_t *DI, int ticks)
 {
 	uint8_t construct[REMOTE_MAX_MSG_SIZE];
 	int s;
 
-	uint64_t DIl=*(uint64_t *)DI;
+	if(!ticks || (!DI && !DO))
+		return;
+	while (ticks) {
+		int chunk;
+		if (ticks < 65)
+			chunk = ticks;
+		else {
+			chunk = 64;
+		}
+		ticks -= chunk;
+		uint64_t di = 0;
+		int bytes = (chunk + 7) >> 3;
+		int i = 0;
+		if (DI) {
+			for (; i < bytes; i++) {
+				di |= *DI << (i * 8);
+				DI++;
+			}
+		}
+		/* PRIx64 differs with system. Use it explicit in the format string*/
+		s = snprintf((char *)construct, REMOTE_MAX_MSG_SIZE,
+					 "!J%c%02x%" PRIx64 "%c",
+					 (!ticks && final_tms) ?
+					 REMOTE_TDITDO_TMS : REMOTE_TDITDO_NOTMS,
+					 chunk, di, REMOTE_EOM);
+		platform_buffer_write(construct,s);
 
-	if(!ticks || !DI) return;
-
-	/* Reduce the length of DI according to the bits we're transmitting */
-	DIl &= (1LL << (ticks + 1))-1;
-
-	s = snprintf((char *)construct, REMOTE_MAX_MSG_SIZE,
-				 REMOTE_JTAG_TDIDO_STR,
-				 final_tms ? REMOTE_TDITDO_TMS : REMOTE_TDITDO_NOTMS,
-				 ticks, DIl);
-	platform_buffer_write(construct,s);
-
-	s = platform_buffer_read(construct, REMOTE_MAX_MSG_SIZE);
-	if ((!s) || (construct[0] == REMOTE_RESP_ERR)) {
-		DEBUG_WARN("jtagtap_tms_seq failed, error %s\n",
-				s ? (char *)&(construct[1]) : "unknown");
-		exit(-1);
-    }
-
-	if (DO) {
-		uint64_t DOl = remotehston(-1, (char *)&construct[1]);
-		*(uint64_t *)DO = DOl;
+		s = platform_buffer_read(construct, REMOTE_MAX_MSG_SIZE);
+		if ((!s) || (construct[0] == REMOTE_RESP_ERR)) {
+			DEBUG_WARN("jtagtap_tms_seq failed, error %s\n",
+					   s ? (char *)&(construct[1]) : "unknown");
+			exit(-1);
+		}
+		if (DO) {
+			uint64_t res = remotehston(-1, (char *)&construct[1]);
+			for (i = bytes; i > 0; i--) {
+				*DO++ = res & 0xff;
+				res >>= 8;
+			}
+		}
 	}
 }
 

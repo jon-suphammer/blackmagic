@@ -17,28 +17,68 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <sys/types.h>
 #include "general.h"
 #include <windows.h>
 #include "remote.h"
 #include "cl_utils.h"
 
-HANDLE hComm;
+static HANDLE hComm;
+
+static char *find_bmp_by_serial(const char *serial)
+{
+	char regpath[258];
+	/* First find the containers of the BMP comports */
+	sprintf(regpath,
+			"SYSTEM\\CurrentControlSet\\Enum\\USB\\VID_%04X&PID_%04X\\%s",
+			VENDOR_ID_BMP, PRODUCT_ID_BMP, serial);
+	HKEY hkeySection;
+	LSTATUS res;
+	res = RegOpenKeyEx(HKEY_LOCAL_MACHINE, regpath, 0, KEY_READ, &hkeySection);
+	if (res != ERROR_SUCCESS)
+		return NULL;
+	BYTE prefix[128];
+	DWORD maxlen = sizeof(prefix);
+	res = RegQueryValueEx(hkeySection, "ParentIdPrefix", NULL, NULL, prefix,
+						  &maxlen);
+	RegCloseKey(hkeySection);
+	if (res != ERROR_SUCCESS)
+		return NULL;
+	printf("prefix %s\n", prefix);
+	sprintf(regpath,
+			"SYSTEM\\CurrentControlSet\\Enum\\USB\\VID_%04X&PID_%04X&MI_00\\%s"
+			"&0000\\Device Parameters",
+			VENDOR_ID_BMP, PRODUCT_ID_BMP, prefix);
+	printf("%s\n", regpath);
+	res = RegOpenKeyEx(HKEY_LOCAL_MACHINE, regpath, 0, KEY_READ, &hkeySection);
+	if (res != ERROR_SUCCESS) {
+		printf("Failuere\n");
+		return NULL;
+	}
+	BYTE port[128];
+	maxlen = sizeof(port);
+	res = RegQueryValueEx(hkeySection, "PortName", NULL, NULL, port,  &maxlen);
+	RegCloseKey(hkeySection);
+	if (res != ERROR_SUCCESS)
+		return NULL;
+	printf("Portname %s\n", port);
+	return strdup((char*)port);
+}
 
 int serial_open(BMP_CL_OPTIONS_t *cl_opts, char * serial)
 {
-	(void) serial; /* FIXME: Does Windows allow open with USB serial no? */
+	char device[256];
+	if (!cl_opts->opt_device)
+		cl_opts->opt_device = find_bmp_by_serial(serial);
 	if (!cl_opts->opt_device) {
-		DEBUG_WARN("Specify the serial device to use!\n");
+		DEBUG_WARN("Unexpected problems finding the device!\n");
 		return -1;
 	}
-	char device[256];
-	if (strstr(device, "\\\\.\\")) {
-		strncpy(device, cl_opts->opt_device, sizeof(cl_opts->opt_device) - 1);
+	if (strstr(cl_opts->opt_device, "\\\\.\\")) {
+		strncpy(device, cl_opts->opt_device, sizeof(device) - 1);
 	} else {
 		strcpy(device,  "\\\\.\\");
 		strncat(device, cl_opts->opt_device,
-				sizeof(cl_opts->opt_device) - strlen(cl_opts->opt_device) - 1);
+				sizeof(device) - strlen(device) - 1);
 	}
 	hComm = CreateFile(device,                //port name
                       GENERIC_READ | GENERIC_WRITE, //Read/Write
@@ -59,6 +99,7 @@ int serial_open(BMP_CL_OPTIONS_t *cl_opts, char * serial)
 		return -1;
 	}
 	dcbSerialParams.ByteSize = 8;
+	dcbSerialParams.fDtrControl = DTR_CONTROL_ENABLE;
 	if (!SetCommState(hComm, &dcbSerialParams)) {
 		DEBUG_WARN("SetCommState failed %ld\n", GetLastError());
 		return -1;
@@ -102,7 +143,7 @@ int platform_buffer_read(uint8_t *data, int maxsize)
 	DWORD s;
 	uint8_t response = 0;
 	uint32_t startTime = platform_time_ms();
-	uint32_t endTime = platform_time_ms() + RESP_TIMEOUT;
+	uint32_t endTime = platform_time_ms() + cortexm_wait_timeout;
 	do {
 		if (!ReadFile(hComm, &response, 1, &s, NULL)) {
 			DEBUG_WARN("ERROR on read RESP\n");

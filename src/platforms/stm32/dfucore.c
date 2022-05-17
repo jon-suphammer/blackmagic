@@ -18,8 +18,12 @@
  */
 
 #include "general.h"
-
+#include "version.h"
+#include "serialno.h"
 #include <string.h>
+
+#include <libopencm3/stm32/desig.h>
+
 #if defined(STM32F1HD)
 #	define DFU_IFACE_STRING  "@Internal Flash   /0x08000000/4*002Ka,000*002Kg"
 #   define DFU_IFACE_STRING_OFFSET 38
@@ -28,8 +32,11 @@
 #	define DFU_IFACE_STRING  "@Internal Flash   /0x08000000/8*001Ka,000*001Kg"
 #   define DFU_IFACE_STRING_OFFSET 38
 #   define DFU_IFACE_PAGESIZE 1
-#elif defined(STM32F4)
-#	define DFU_IFACE_STRING  "/0x08000000/1*016Ka,3*016Kg,1*064Kg,7*128Kg"
+#elif defined(STM32F4) ||  defined(STM32F7)
+#   define FLASH_BASE         0x08000000U
+#   define DFU_IFACE_PAGESIZE 128
+#   define DFU_IFACE_STRING_OFFSET 54
+#	define DFU_IFACE_STRING  "@Internal Flash   /0x08000000/1*016Ka,3*016Kg,1*064Kg,000*128Kg"
 #endif
 #include <libopencm3/stm32/flash.h>
 
@@ -56,7 +63,7 @@ static struct {
 } prog;
 static uint8_t current_error;
 
-const struct usb_device_descriptor dev = {
+const struct usb_device_descriptor dev_desc = {
 	.bLength = USB_DT_DEVICE_SIZE,
 	.bDescriptorType = USB_DT_DEVICE,
 	.bcdUSB = 0x0200,
@@ -118,24 +125,16 @@ const struct usb_config_descriptor config = {
 	.interface = ifaces,
 };
 
-static char serial_no[9];
+static char serial_no[DFU_SERIAL_LENGTH];
 static char if_string[] = DFU_IFACE_STRING;
+#define BOARD_IDENT_DFU(BOARD_TYPE) "Black Magic Probe DFU " PLATFORM_IDENT  "" FIRMWARE_VERSION
 
 static const char *usb_strings[] = {
 	"Black Sphere Technologies",
-	BOARD_IDENT_DFU,
+	BOARD_IDENT_DFU(PLATFORM_IDENT),
 	serial_no,
 	/* This string is used by ST Microelectronics' DfuSe utility */
 	if_string,
-};
-
-static char upd_if_string[] = UPD_IFACE_STRING;
-static const char *usb_strings_upd[] = {
-	"Black Sphere Technologies",
-	BOARD_IDENT_UPD,
-	serial_no,
-	/* This string is used by ST Microelectronics' DfuSe utility */
-	upd_if_string,
 };
 
 static uint32_t get_le32(const void *vp)
@@ -290,12 +289,12 @@ static enum usbd_request_return_codes usbdfu_control_request(usbd_device *dev,
 	return USBD_REQ_NOTSUPP;
 }
 
-void dfu_init(const usbd_driver *driver, dfu_mode_t mode)
+void dfu_init(const usbd_driver *driver)
 {
 	get_dev_unique_id(serial_no);
 
-	usbdev = usbd_init(driver, &dev, &config,
-			   (mode == DFU_MODE)?usb_strings:usb_strings_upd, 4,
+	usbdev = usbd_init(driver, &dev_desc, &config,
+			   usb_strings, 4,
 			   usbd_control_buffer, sizeof(usbd_control_buffer));
 
 	usbd_register_control_callback(usbdev,
@@ -335,52 +334,19 @@ static void set_dfu_iface_string(uint32_t size)
 	*p++ = size + '0';
 }
 #else
-# define set_dfu_iface_string()
+# define set_dfu_iface_string(x)
 #endif
 
 static char *get_dev_unique_id(char *s)
 {
-#if defined(STM32F4) || defined(STM32F2)
-#	define UNIQUE_SERIAL_R 0x1FFF7A10
-#	define FLASH_SIZE_R    0x1fff7A22
-#elif defined(STM32F3)
-#	define UNIQUE_SERIAL_R 0x1FFFF7AC
-#	define FLASH_SIZE_R    0x1fff77cc
-#elif defined(STM32L1)
-#	define UNIQUE_SERIAL_R 0x1ff80050
-#	define FLASH_SIZE_R    0x1FF8004C
-#else
-#	define UNIQUE_SERIAL_R 0x1FFFF7E8;
-#	define FLASH_SIZE_R    0x1ffff7e0
-#endif
-	volatile uint32_t *unique_id_p = (volatile uint32_t *)UNIQUE_SERIAL_R;
-	uint32_t unique_id = *unique_id_p +
-			*(unique_id_p + 1) +
-			*(unique_id_p + 2);
-	int i;
 	uint32_t fuse_flash_size;
 
 	/* Calculated the upper flash limit from the exported data
 	   in theparameter block*/
-	fuse_flash_size = *(uint32_t *) FLASH_SIZE_R & 0xfff;
+	fuse_flash_size = desig_get_flash_size();
 	if (fuse_flash_size == 0x40) /* Handle F103x8 as F103xB! */
 		fuse_flash_size = 0x80;
 	set_dfu_iface_string(fuse_flash_size - 8);
 	max_address = FLASH_BASE + (fuse_flash_size << 10);
-	/* If bootloader pages are write protected or device is read
-	 * protected, deny bootloader update.
-	 * User can still force updates, at his own risk!
-	 */
-	if (((FLASH_WRPR & 0x03) != 0x03) || (FLASH_OBR & FLASH_OBR_RDPRT_EN))
-		upd_if_string[30] = '0';
-	/* Fetch serial number from chip's unique ID */
-	for(i = 0; i < 8; i++) {
-		s[7-i] = ((unique_id >> (4*i)) & 0xF) + '0';
-	}
-	for(i = 0; i < 8; i++)
-		if(s[i] > '9')
-			s[i] += 'A' - '9' - 1;
-	s[8] = 0;
-
-	return s;
+	return serial_no_read(s);
 }

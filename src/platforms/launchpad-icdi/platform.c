@@ -25,9 +25,6 @@
 #include <libopencm3/cm3/systick.h>
 #include <libopencm3/lm4f/usb.h>
 
-#define SYSTICKHZ	100
-#define SYSTICKMS	(1000 / SYSTICKHZ)
-
 #define PLL_DIV_80MHZ	5
 #define PLL_DIV_25MHZ	16
 
@@ -36,6 +33,8 @@ extern void trace_tick(void);
 volatile platform_timeout * volatile head_timeout;
 uint8_t running_status;
 static volatile uint32_t time_ms;
+
+uint32_t swd_delay_cnt = 0;
 
 void sys_tick_handler(void)
 {
@@ -118,20 +117,20 @@ const char *platform_target_voltage(void)
 	return NULL;
 }
 
-char *serialno_read(char *s)
+char *serial_no_read(char *s)
 {
 	/* FIXME: Store a unique serial number somewhere and retreive here */
-	uint32_t unique_id = 1;
+	uint32_t unique_id = SERIAL_NO;
         int i;
 
         /* Fetch serial number from chip's unique ID */
         for(i = 0; i < 8; i++) {
                 s[7-i] = ((unique_id >> (4*i)) & 0xF) + '0';
         }
-        for(i = 0; i < 8; i++)
+        for(i = 0; i < DFU_SERIAL_LENGTH - 1; i++)
                 if(s[i] > '9')
                         s[i] += 'A' - '9' - 1;
-	s[8] = 0;
+	s[DFU_SERIAL_LENGTH - 1] = 0;
 
 	return s;
 }
@@ -140,3 +139,12 @@ void platform_request_boot(void)
 {
 }
 
+void platform_max_frequency_set(uint32_t freq)
+{
+	(void)freq;
+}
+
+uint32_t platform_max_frequency_get(void)
+{
+	return 0;
+}

@@ -19,7 +19,6 @@
  */
 
 #include "general.h"
-#include "target.h"
 #include "target_internal.h"
 
 #include <stdarg.h>
@@ -33,6 +32,11 @@ static int target_flash_done_buffered(struct target_flash *f);
 static bool nop_function(void)
 {
 	return true;
+}
+
+static bool false_function(void)
+{
+	return false;
 }
 
 target *target_new(void)
@@ -54,7 +58,6 @@ target *target_new(void)
 
 	t->attach = (void*)nop_function;
 	t->detach = (void*)nop_function;
-	t->check_error = (void*)nop_function;
 	t->mem_read = (void*)nop_function;
 	t->mem_write = (void*)nop_function;
 	t->reg_read = (void*)nop_function;
@@ -65,17 +68,20 @@ target *target_new(void)
 	t->halt_request = (void*)nop_function;
 	t->halt_poll = (void*)nop_function;
 	t->halt_resume = (void*)nop_function;
+	t->check_error = (void*)false_function;
+
+	t->target_storage = NULL;
 
 	return t;
 }
 
-bool target_foreach(void (*cb)(int, target *t, void *context), void *context)
+int target_foreach(void (*cb)(int, target *t, void *context), void *context)
 {
 	int i = 1;
 	target *t = target_list;
 	for (; t; t = t->next, i++)
 		cb(i, t, context);
-	return target_list != NULL;
+	return i;
 }
 
 void target_mem_map_free(target *t)
@@ -100,7 +106,7 @@ void target_list_free(void)
 
 	while(target_list) {
 		target *t = target_list->next;
-		if (target_list->tc)
+		if (target_list->tc && target_list->tc->destroy_callback)
 			target_list->tc->destroy_callback(target_list->tc, target_list);
 		if (target_list->priv)
 			target_list->priv_free(target_list->priv);
@@ -109,6 +115,7 @@ void target_list_free(void)
 			free(target_list->commands);
 			target_list->commands = tc;
 		}
+		free(target_list->target_storage);
 		target_mem_map_free(target_list);
 		while (target_list->bw_list) {
 			void * next = target_list->bw_list->next;
@@ -275,7 +282,7 @@ int target_flash_done(target *t)
 		if (tmp)
 			return tmp;
 		if (f->done) {
-			int tmp = f->done(f);
+			tmp = f->done(f);
 			if (tmp)
 				return tmp;
 		}
@@ -340,12 +347,17 @@ void target_detach(target *t)
 	t->detach(t);
 	t->attached = false;
 #if PC_HOSTED == 1
-# include "platform.h"
 	platform_buffer_flush();
 #endif
 }
 
-bool target_check_error(target *t) { return t->check_error(t); }
+bool target_check_error(target *t) {
+	if (t)
+		return t->check_error(t);
+	else
+		return false;
+}
+
 bool target_attached(target *t) { return t->attached; }
 
 /* Memory access functions */
@@ -502,6 +514,16 @@ const char *target_core_name(target *t)
 	return t->core;
 }
 
+unsigned int target_designer(target *t)
+{
+	return t->t_designer;
+}
+
+unsigned int target_idcode(target *t)
+{
+	return t->idcode;
+}
+
 uint32_t target_mem_read32(target *t, uint32_t addr)
 {
 	uint32_t ret;
@@ -552,7 +574,7 @@ int target_command(target *t, int argc, const char *argv[])
 	for (struct target_command_s *tc = t->commands; tc; tc = tc->next)
 		for(const struct command_s *c = tc->cmds; c->cmd; c++)
 			if(!strncmp(argv[0], c->cmd, strlen(argv[0])))
-				return !c->handler(t, argc, argv);
+				return (c->handler(t, argc, argv)) ? 0 : 1;
 	return -1;
 }
 
@@ -566,6 +588,7 @@ void tc_printf(target *t, const char *fmt, ...)
 
 	va_start(ap, fmt);
 	t->tc->printf(t->tc, fmt, ap);
+	fflush(stdout);
 	va_end(ap);
 }
 

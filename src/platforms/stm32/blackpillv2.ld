@@ -1,8 +1,7 @@
 /*
- * This file is part of the Black Magic Debug project.
+ * This file is part of the libopenstm32 project.
  *
- * Copyright (C) 2015  Black Sphere Technologies Ltd.
- * Written by Gareth McMullin <gareth@blacksphere.co.nz>
+ * Copyright (C) 2010 Thomas Otto <tommi@viadmin.org>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,10 +16,13 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#ifndef __SERIALNO_H
-#define __SERIALNO_H
 
-char *serialno_read(char *s);
+/* Define memory regions. */
+MEMORY
+{
+	rom (rx) : ORIGIN = 0x08000000, LENGTH = 512K
+	ram (rwx) : ORIGIN = 0x20000000, LENGTH = 96K
+}
 
-#endif
-
+/* Include the common ld script from libopenstm32. */
+INCLUDE cortex-m-generic.ld

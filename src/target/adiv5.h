@@ -27,22 +27,25 @@
 #define ADIV5_DP_REG(x)   (x)
 #define ADIV5_AP_REG(x)   (ADIV5_APnDP | (x))
 
+#define ADIV5_DP_BANK0    0x00
+#define ADIV5_DP_BANK1    0x10
+#define ADIV5_DP_BANK2    0x20
+#define ADIV5_DP_BANK3    0x30
+#define ADIV5_DP_BANK4    0x40
+
 /* ADIv5 DP Register addresses */
 #define ADIV5_DP_IDCODE   ADIV5_DP_REG(0x0)
 #define ADIV5_DP_ABORT    ADIV5_DP_REG(0x0)
 #define ADIV5_DP_CTRLSTAT ADIV5_DP_REG(0x4)
+#define ADIV5_DP_TARGETID  (ADIV5_DP_BANK2 | ADIV5_DP_REG(0x4))
 #define ADIV5_DP_SELECT   ADIV5_DP_REG(0x8)
 #define ADIV5_DP_RDBUFF   ADIV5_DP_REG(0xC)
-
-#define ADIV5_DP_BANK0    0
-#define ADIV5_DP_BANK1    1
-#define ADIV5_DP_BANK2    2
-#define ADIV5_DP_BANK3    3
-#define ADIV5_DP_BANK4    4
+#define ADIV5_DP_TARGETSEL ADIV5_DP_REG(0xC)
 
 #define ADIV5_DP_VERSION_MASK 0xf000
 #define ADIV5_DPv1            0x1000
 #define ADIV5_DPv2            0x2000
+#define ADIV5_MINDP          0x10000
 
 /* AP Abort Register (ABORT) */
 /* Bits 31:5 - Reserved */
@@ -62,7 +65,7 @@
 #define ADIV5_DP_CTRLSTAT_CDBGRSTREQ	(1u << 26)
 /* Bits 25:24 - Reserved */
 /* Bits 23:12 - TRNCNT */
-#define ADIV5_DP_CTRLSTAT_TRNCNT
+#define ADIV5_DP_CTRLSTAT_TRNCNT        (1u << 12)
 /* Bits 11:8 - MASKLANE */
 #define ADIV5_DP_CTRLSTAT_MASKLANE
 /* Bits 7:6 - Reserved in JTAG-DP */
@@ -85,6 +88,23 @@
 #define ADIV5_AP_CFG		ADIV5_AP_REG(0xF4)
 #define ADIV5_AP_BASE		ADIV5_AP_REG(0xF8)
 #define ADIV5_AP_IDR		ADIV5_AP_REG(0xFC)
+
+/* Known designers seen in SYSROM-PIDR. Ignore Bit 0 from
+ * the designer bits to get JEDEC Ids with bit 7 ignored.*/
+#define AP_DESIGNER_FREESCALE    0x00e
+#define AP_DESIGNER_TEXAS        0x017
+#define AP_DESIGNER_ATMEL        0x01f
+#define AP_DESIGNER_STM          0x020
+#define AP_DESIGNER_CYPRESS      0x034
+#define AP_DESIGNER_INFINEON     0x041
+#define AP_DESIGNER_NORDIC       0x244
+#define AP_DESIGNER_ARM          0x43b
+/*LPC845 with designer 501. Strange!? */
+#define AP_DESIGNER_SPECULAR     0x501
+#define AP_DESIGNER_CS           0x555
+#define AP_DESIGNER_ENERGY_MICRO 0x673
+#define AP_DESIGNER_GIGADEVICE   0x751
+#define AP_DESIGNER_RASPBERRY    0x927
 
 /* AP Control and Status Word (CSW) */
 #define ADIV5_AP_CSW_DBGSWENABLE	(1u << 31)
@@ -122,6 +142,10 @@
 #define ADIV5_LOW_WRITE		0
 #define ADIV5_LOW_READ		1
 
+#define SWDP_ACK_OK    0x01
+#define SWDP_ACK_WAIT  0x02
+#define SWDP_ACK_FAULT 0x04
+
 enum align {
 	ALIGN_BYTE     = 0,
 	ALIGN_HALFWORD = 1,
@@ -138,6 +162,13 @@ typedef struct ADIv5_DP_s {
 	uint32_t idcode;
 	uint32_t targetid;  /* Contains IDCODE for DPv2 devices.*/
 
+	void (*seq_out)(uint32_t MS, int ticks);
+	void (*seq_out_parity)(uint32_t MS, int ticks);
+	uint32_t (*seq_in)(int ticks);
+	bool (*seq_in_parity)(uint32_t *ret, int ticks);
+	/* dp_low_write returns true if no OK resonse, but ignores errors */
+	bool (*dp_low_write)(struct ADIv5_DP_s *dp, uint16_t addr,
+						 const uint32_t data);
 	uint32_t (*dp_read)(struct ADIv5_DP_s *dp, uint16_t addr);
 	uint32_t (*error)(struct ADIv5_DP_s *dp);
 	uint32_t (*low_access)(struct ADIv5_DP_s *dp, uint8_t RnW,
@@ -145,6 +176,7 @@ typedef struct ADIv5_DP_s {
 	void (*abort)(struct ADIv5_DP_s *dp, uint32_t abort);
 
 #if PC_HOSTED == 1
+	bmp_type_t dp_bmp_type;
 	bool (*ap_setup)(int i);
 	void (*ap_cleanup)(int i);
     void (*ap_regs_read)(ADIv5_AP_t *ap, void *data);
@@ -153,7 +185,6 @@ typedef struct ADIv5_DP_s {
 	void (*read_block)(uint32_t addr, uint8_t *data, int size);
 	void (*dap_write_block_sized)(uint32_t addr, uint8_t *data,
 								  int size, enum align align);
-
 #endif
 	uint32_t (*ap_read)(ADIv5_AP_t *ap, uint16_t addr);
 	void (*ap_write)(ADIv5_AP_t *ap, uint16_t addr, uint32_t value);
@@ -161,15 +192,8 @@ typedef struct ADIv5_DP_s {
 	void (*mem_read)(ADIv5_AP_t *ap, void *dest, uint32_t src, size_t len);
 	void (*mem_write_sized)(ADIv5_AP_t *ap, uint32_t dest, const void *src,
 							size_t len, enum align align);
-#if PC_HOSTED == 1
-	jtag_dev_t *dev;
+	uint8_t dp_jd_index;
 	uint8_t fault;
-#else
-	union {
-		jtag_dev_t *dev;
-		uint8_t fault;
-	};
-#endif
 } ADIv5_DP_t;
 
 struct ADIv5_AP_s {
@@ -181,7 +205,13 @@ struct ADIv5_AP_s {
 	uint32_t idr;
 	uint32_t base;
 	uint32_t csw;
+	uint32_t ap_cortexm_demcr; /* Copy of demcr when starting */
+	uint32_t ap_storage; /* E.g to hold STM32F7 initial DBGMCU_CR value.*/
+	uint16_t ap_designer;
+	uint16_t ap_partno;
 };
+
+unsigned int make_packet_request(uint8_t RnW, uint16_t addr);
 
 #if PC_HOSTED == 0
 static inline uint32_t adiv5_dp_read(ADIv5_DP_t *dp, uint16_t addr)
@@ -250,11 +280,14 @@ void adiv5_dp_write(ADIv5_DP_t *dp, uint16_t addr, uint32_t value);
 void adiv5_dp_init(ADIv5_DP_t *dp);
 void platform_adiv5_dp_defaults(ADIv5_DP_t *dp);
 ADIv5_AP_t *adiv5_new_ap(ADIv5_DP_t *dp, uint8_t apsel);
+void remote_jtag_dev(const jtag_dev_t *jtag_dev);
 void adiv5_ap_ref(ADIv5_AP_t *ap);
 void adiv5_ap_unref(ADIv5_AP_t *ap);
+void platform_add_jtag_dev(const int dev_index, const jtag_dev_t *jtag_dev);
 
-void adiv5_jtag_dp_handler(jtag_dev_t *dev);
+void adiv5_jtag_dp_handler(uint8_t jd_index);
 int platform_jtag_dp_init(ADIv5_DP_t *dp);
+int swdptap_init(ADIv5_DP_t *dp);
 
 void adiv5_mem_write(ADIv5_AP_t *ap, uint32_t dest, const void *src, size_t len);
 uint64_t adiv5_ap_read_pidr(ADIv5_AP_t *ap, uint32_t addr);
@@ -276,4 +309,5 @@ uint32_t fw_adiv5_jtagdp_read(ADIv5_DP_t *dp, uint16_t addr);
 uint32_t firmware_swdp_error(ADIv5_DP_t *dp);
 
 void firmware_swdp_abort(ADIv5_DP_t *dp, uint32_t abort);
+void adiv5_jtagdp_abort(ADIv5_DP_t *dp, uint32_t abort);
 #endif

@@ -21,7 +21,9 @@
 #ifndef __GENERAL_H
 #define __GENERAL_H
 
-#define _GNU_SOURCE
+#if !defined(_GNU_SOURCE)
+# define _GNU_SOURCE
+#endif
 #if !defined(__USE_MINGW_ANSI_STDIO)
 # define __USE_MINGW_ANSI_STDIO 1
 #endif
@@ -37,6 +39,8 @@
 #include "platform.h"
 #include "platform_support.h"
 
+extern uint32_t delay_cnt;
+
 enum BMP_DEBUG {
 	BMP_DEBUG_NONE   =  0,
 	BMP_DEBUG_INFO   =  1,
@@ -48,23 +52,28 @@ enum BMP_DEBUG {
 	BMP_DEBUG_STDOUT = 0x8000,
 };
 
+#define FREQ_FIXED 0xffffffff
+
 #if PC_HOSTED == 0
 /* For BMP debug output on a firmware BMP platform, using
  * BMP PC-Hosted is the preferred way. Printing DEBUG_WARN
  * and DEBUG_INFO is kept for comptibiluty.
  */
-# if defined(ENABLE_DEBUG)
-#  define DEBUG_WARN printf
-#  define DEBUG_INFO printf
-# else
-#  define DEBUG_WARN(...)
-#  define DEBUG_INFO(...)
+# if !defined(PLATFORM_PRINTF)
+#  define PLATFORM_PRINTF printf
 # endif
-# define DEBUG_GDB(...)
-# define DEBUG_TARGET(...)
-# define DEBUG_PROBE(...)
-# define DEBUG_WIRE(...)
-# define DEBUG_GDB_WIRE(...)
+# if defined(ENABLE_DEBUG)
+#  define DEBUG_WARN PLATFORM_PRINTF
+#  define DEBUG_INFO PLATFORM_PRINTF
+# else
+#  define DEBUG_WARN(...) do {} while(0)
+#  define DEBUG_INFO(...) do {} while(0)
+# endif
+# define DEBUG_GDB(...) do {} while(0)
+# define DEBUG_TARGET(...) do {} while(0)
+# define DEBUG_PROBE(...) do {} while(0)
+# define DEBUG_WIRE(...) do {} while(0)
+# define DEBUG_GDB_WIRE(...) do {} while(0)
 #else
 # include <stdarg.h>
 extern int cl_debuglevel;
@@ -154,6 +163,12 @@ static inline void DEBUG_WIRE(const char *format, ...)
 #define MIN(x, y)  (((x) < (y)) ? (x) : (y))
 #undef MAX
 #define MAX(x, y)  (((x) > (y)) ? (x) : (y))
+
+#if !defined(SYSTICKHZ)
+# define SYSTICKHZ 100
+#endif
+#define SYSTICKMS (1000 / SYSTICKHZ)
+#define MORSECNT ((SYSTICKHZ / 10) - 1)
 
 #endif
 

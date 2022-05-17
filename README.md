@@ -1,10 +1,7 @@
 Black Magic Probe
 =================
 
-[![Build Status](https://travis-ci.org/blacksphere/blackmagic.svg?branch=master)](https://travis-ci.org/blacksphere/blackmagic)
 [![Discord](https://img.shields.io/discord/613131135903596547?logo=discord)](https://discord.gg/P7FYThy)
-[![Donate](https://img.shields.io/badge/paypal-donate-blue.svg)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=N84QYNAM2JJQG)
-[![Kickstarter](https://img.shields.io/badge/kickstarter-back%20us-14e16e.svg)](https://www.kickstarter.com/projects/esden/1bitsy-and-black-magic-probe-demystifying-arm-prog)
 
 Firmware for the Black Magic Debug Probe.
 
@@ -18,11 +15,30 @@ standard USB interface. The user is able to control exactly what happens
 using the GNU source level debugging software, GDB.
 Serial Wire Output (SWO) allows the target to write tracing and logging to the host
 without using usb or serial port. Decoding SWO in the probe itself
-makes [SWO viewing as simple as connecting to a serial port](https://github.com/blacksphere/blackmagic/wiki/Serial-Wire-Output).
+makes [SWO viewing as simple as connecting to a serial port](https://github.com/blackmagic-debug/blackmagic/wiki/Serial-Wire-Output).
 
-See online documentation at https://github.com/blacksphere/blackmagic/wiki
 
-Binaries from the latest automated build are at http://builds.blacksphere.co.nz/blackmagic
+Resources
+=========
+
+ * [Documentation](https://github.com/blackmagic-debug/blackmagic/wiki)
+ * [Binary builds](http://builds.blacksphere.co.nz/blackmagic)
+
+
+Toolchain specific remarks
+==========================
+Most firmware building is done with the most recent suite from https://developer.arm.com/tools-and-software/open-source-software/developer-tools/gnu-toolchain/gnu-rm.
+If you have a toolchain from other sources and find problems, check if it is a failure of your toolchain and if not open an issue or better provide a pull request with a fix.
+
+OS specific remarks for BMP-Hosted
+==================================
+Most hosted building is done on and for Linux. BMP-hosted for windows can also be build with Mingw on Linux.<br>
+Building hosted for BMP firmware probes only with "make PROBE_HOST HOSTED_BMP_ONLY=1" does not require libusb, libftdi and evt. libhidapi development headers and libraries for running.<br>
+On BSD/Macos, using dev/tty.usbmodemXXX should work but unresolved discussions indicate a hanging open() call on the second invocation. If that happens, try with cu.usbmodemXXX.<br>
+
+Reporting problems
+==================
+Before reporting issues, check against the latest git version. If possible, test against another target /and/or debug probe. Consider broken USB cables and connectors. Try to reproduce with bmp-hosted with at least debug bit 1 set (blackmagic -v 1 ...), as debug messages will be dumped to the starting console. When reporting issues, be as specific as possible!
 
 Sample Session
 =============
@@ -80,7 +96,7 @@ Add "-P (position)" to the next invocation to select one.
 For the setup from the sample session above:
 In another terminal:
 ```console
-> blackmagic 
+> blackmagic
 Using 1d50:6018 E2E489E7 Black Sphere Technologies Black Magic Probe (STLINK), (Firmware v1.6.1-477-g70bb131-dirty)
 Remote is Black Magic Probe (STLINK), (Firmware v1.6.1-477-g70bb131-dirty) v1.6.1-477-g70bb131-dirty
 Listening on TCP: 2000

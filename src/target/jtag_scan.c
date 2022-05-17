@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2011  Black Sphere Technologies Ltd.
  * Written by Gareth McMullin <gareth@blacksphere.co.nz>
+ * Copyright (C) 2022  1bitsquared - Rachel Mant <git@dragonmux.network>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,7 +35,17 @@ struct jtag_dev_s jtag_devs[JTAG_MAX_DEVS+1];
 int jtag_dev_count;
 
 /* bucket of ones for don't care TDI */
-static const uint8_t ones[] = "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF";
+static const uint8_t ones[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+#if PC_HOSTED == 0
+void jtag_add_device(const int dev_index, const jtag_dev_t *jtag_dev)
+{
+	if (dev_index == 0)
+		memset(&jtag_devs, 0, sizeof(jtag_devs));
+	memcpy(&jtag_devs[dev_index], jtag_dev, sizeof(jtag_dev_t));
+	jtag_dev_count = dev_index + 1;
+}
+#endif
 
 /* Scan JTAG chain for devices, store IR length and IDCODE (if present).
  * Reset TAP state machine.
@@ -94,7 +105,7 @@ int jtag_scan(const uint8_t *irlens)
 			}
 			jtag_devs[jtag_dev_count].ir_len = *irlens;
 			jtag_devs[jtag_dev_count].ir_prescan = j;
-			jtag_devs[jtag_dev_count].dev = jtag_dev_count;
+			jtag_devs[jtag_dev_count].jd_dev = jtag_dev_count;
 			j += *irlens;
 			irlens++;
 			jtag_dev_count++;
@@ -117,7 +128,7 @@ int jtag_scan(const uint8_t *irlens)
 				if(jtag_devs[jtag_dev_count].ir_len == 1) break;
 				jtag_devs[++jtag_dev_count].ir_len = 1;
 				jtag_devs[jtag_dev_count].ir_prescan = j;
-				jtag_devs[jtag_dev_count].dev = jtag_dev_count;
+				jtag_devs[jtag_dev_count].jd_dev = jtag_dev_count;
 			} else jtag_devs[jtag_dev_count].ir_len++;
 			j++;
 		}
@@ -169,34 +180,52 @@ int jtag_scan(const uint8_t *irlens)
 	jtagtap_shift_dr();
 	for(i = 0; i < jtag_dev_count; i++) {
 		if(!jtag_proc.jtagtap_next(0, 1)) continue;
-		jtag_devs[i].idcode = 1;
+		jtag_devs[i].jd_idcode = 1;
 		for(j = 2; j; j <<= 1)
-			if(jtag_proc.jtagtap_next(0, 1)) jtag_devs[i].idcode |= j;
+			if(jtag_proc.jtagtap_next(0, 1)) jtag_devs[i].jd_idcode |= j;
 
 	}
 	DEBUG_INFO("Return to Run-Test/Idle\n");
 	jtag_proc.jtagtap_next(1, 1);
 	jtagtap_return_idle();
+#if PC_HOSTED == 1
+	/*Transfer needed device information to firmware jtag_devs*/
+	for(i = 0; i < jtag_dev_count; i++)
+		platform_add_jtag_dev(i, &jtag_devs[i]);
+	for(i = 0; i < jtag_dev_count; i++) {
+		DEBUG_INFO("Idcode 0x%08" PRIx32, jtag_devs[i].jd_idcode);
+		for(j = 0; dev_descr[j].idcode; j++) {
+			if((jtag_devs[i].jd_idcode & dev_descr[j].idmask) ==
+			   dev_descr[j].idcode) {
+				DEBUG_INFO(": %s",
+						  (dev_descr[j].descr) ? dev_descr[j].descr : "unknown");
+				break;
+			}
+		}
+		DEBUG_INFO("\n");
+	}
+#endif
 
 	/* Check for known devices and handle accordingly */
 	for(i = 0; i < jtag_dev_count; i++)
 		for(j = 0; dev_descr[j].idcode; j++)
-			if((jtag_devs[i].idcode & dev_descr[j].idmask) ==
+			if((jtag_devs[i].jd_idcode & dev_descr[j].idmask) ==
 			   dev_descr[j].idcode) {
 				jtag_devs[i].current_ir = -1;
 				/* Save description in table */
-				jtag_devs[i].descr = dev_descr[j].descr;
+				jtag_devs[i].jd_descr = dev_descr[j].descr;
 				/* Call handler to initialise/probe device further */
 				if(dev_descr[j].handler)
-					dev_descr[j].handler(&jtag_devs[i]);
+					dev_descr[j].handler(i);
 				break;
 			}
 
 	return jtag_dev_count;
 }
 
-void jtag_dev_write_ir(jtag_proc_t *jp, jtag_dev_t *d, uint32_t ir)
+void jtag_dev_write_ir(jtag_proc_t *jp, uint8_t jd_index, uint32_t ir)
 {
+	jtag_dev_t *d = &jtag_devs[jd_index];
 	if(ir == d->current_ir) return;
 	for(int i = 0; i < jtag_dev_count; i++)
 		jtag_devs[i].current_ir = -1;
@@ -209,8 +238,9 @@ void jtag_dev_write_ir(jtag_proc_t *jp, jtag_dev_t *d, uint32_t ir)
 	jtagtap_return_idle();
 }
 
-void jtag_dev_shift_dr(jtag_proc_t *jp, jtag_dev_t *d, uint8_t *dout, const uint8_t *din, int ticks)
+void jtag_dev_shift_dr(jtag_proc_t *jp, uint8_t jd_index, uint8_t *dout, const uint8_t *din, int ticks)
 {
+	jtag_dev_t *d = &jtag_devs[jd_index];
 	jtagtap_shift_dr();
 	jp->jtagtap_tdi_seq(0, ones, d->dr_prescan);
 	if(dout)

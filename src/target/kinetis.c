@@ -74,7 +74,6 @@
 #define K64_WRITE_LEN 8
 
 static bool kinetis_cmd_unsafe(target *t, int argc, char *argv[]);
-static bool unsafe_enabled;
 
 const struct command_s kinetis_cmd_list[] = {
 	{"unsafe", (cmd_handler)kinetis_cmd_unsafe, "Allow programming security byte (enable|disable)"},
@@ -85,9 +84,9 @@ static bool kinetis_cmd_unsafe(target *t, int argc, char *argv[])
 {
 	if (argc == 1) {
 		tc_printf(t, "Allow programming security byte: %s\n",
-			  unsafe_enabled ? "enabled" : "disabled");
+			  t->unsafe_enabled ? "enabled" : "disabled");
 	} else {
-		parse_enable_or_disable(argv[1], &unsafe_enabled);
+		parse_enable_or_disable(argv[1], &t->unsafe_enabled);
 	}
 	return true;
 }
@@ -196,7 +195,7 @@ bool kinetis_probe(target *t)
 		kl_gen_add_flash(t, 0x00000000, 0x40000, 0x400, KL_WRITE_LEN);
 		break;
 	case 0x271:
-		switch((sdid>>16)&0x0f){
+		switch((sdid >> 16) & 0x0f) {
 			case 4:
 				t->driver = "KL27x32";
 				target_add_ram(t, 0x1ffff800, 0x0800);
@@ -214,7 +213,7 @@ bool kinetis_probe(target *t)
 		}
 		break;
 	case 0x021: /* KL02 family */
-		switch((sdid>>16) & 0x0f){
+		switch((sdid >> 16) & 0x0f) {
 			case 3:
 				t->driver = "KL02x32";
 				target_add_ram(t, 0x1FFFFC00, 0x400);
@@ -235,7 +234,7 @@ bool kinetis_probe(target *t)
 				break;
 			default:
 				return false;
-			}
+		}
 		break;
 	case 0x031: /* KL03 family */
 		t->driver = "KL03";
@@ -261,16 +260,120 @@ bool kinetis_probe(target *t)
 		kl_gen_add_flash(t, 0, 0x80000, 0x1000, K64_WRITE_LEN);
 		kl_gen_add_flash(t, 0x80000, 0x80000, 0x1000, K64_WRITE_LEN);
 		break;
+	case 0x000: /* Older K-series */
+		switch(sdid & 0xff0) {
+			case 0x000: /* K10 Family, DIEID=0x0 */
+			case 0x080: /* K10 Family, DIEID=0x1 */
+			case 0x100: /* K10 Family, DIEID=0x2 */
+			case 0x180: /* K10 Family, DIEID=0x3 */
+			case 0x220: /* K11 Family, DIEID=0x4 */
+				return false;
+			case 0x200: /* K12 Family, DIEID=0x4 */
+				switch((fcfg1 >> 24) & 0x0f) {
+					/* K12 Sub-Family Reference Manual, K12P80M50SF4RM, Rev. 4, February 2013 */
+					case 0x7:
+						t->driver = "MK12DX128Vxx5";
+						target_add_ram(t, 0x1fffc000, 0x00004000); /* SRAM_L, 16 KB */
+						target_add_ram(t, 0x20000000, 0x00004000); /* SRAM_H, 16 KB */
+						kl_gen_add_flash(t, 0x00000000, 0x00020000, 0x800, KL_WRITE_LEN); /* P-Flash, 128 KB, 2 KB Sectors */
+						kl_gen_add_flash(t, 0x10000000, 0x00010000, 0x800, KL_WRITE_LEN); /* FlexNVM, 64 KB, 2 KB Sectors */
+						break;
+					case 0x9:
+						t->driver = "MK12DX256Vxx5";
+						target_add_ram(t, 0x1fffc000, 0x00004000); /* SRAM_L, 16 KB */
+						target_add_ram(t, 0x20000000, 0x00004000); /* SRAM_H, 16 KB */
+						kl_gen_add_flash(t, 0x00000000, 0x00040000, 0x800, KL_WRITE_LEN); /* P-Flash, 256 KB, 2 KB Sectors */
+						kl_gen_add_flash(t, 0x10000000, 0x00010000, 0x800, KL_WRITE_LEN); /* FlexNVM, 64 KB, 2 KB Sectors */
+						break;
+					case 0xb:
+						t->driver = "MK12DN512Vxx5";
+						target_add_ram(t, 0x1fff8000, 0x00008000); /* SRAM_L, 32 KB */
+						target_add_ram(t, 0x20000000, 0x00008000); /* SRAM_H, 32 KB */
+						kl_gen_add_flash(t, 0x00000000, 0x00040000, 0x800, KL_WRITE_LEN); /* P-Flash, 256 KB, 2 KB Sectors */
+						kl_gen_add_flash(t, 0x00040000, 0x00040000, 0x800, KL_WRITE_LEN); /* FlexNVM, 256 KB, 2 KB Sectors */
+						break;
+					default:
+						return false;
+				}
+				break;
+			case 0x010: /* K20 Family, DIEID=0x0 */
+			case 0x090: /* K20 Family, DIEID=0x1 */
+			case 0x110: /* K20 Family, DIEID=0x2 */
+			case 0x190: /* K20 Family, DIEID=0x3 */
+			case 0x230: /* K21 Family, DIEID=0x4 */
+			case 0x330: /* K21 Family, DIEID=0x6 */
+			case 0x210: /* K22 Family, DIEID=0x4 */
+			case 0x310: /* K22 Family, DIEID=0x6 */
+			case 0x0a0: /* K30 Family, DIEID=0x1 */
+			case 0x120: /* K30 Family, DIEID=0x2 */
+			case 0x0b0: /* K40 Family, DIEID=0x1 */
+			case 0x130: /* K40 Family, DIEID=0x2 */
+			case 0x0e0: /* K50 Family, DIEID=0x1 */
+			case 0x0f0: /* K51 Family, DIEID=0x1 */
+			case 0x170: /* K53 Family, DIEID=0x2 */
+			case 0x140: /* K60 Family, DIEID=0x2 */
+			case 0x1c0: /* K60 Family, DIEID=0x3 */
+			case 0x1d0: /* K70 Family, DIEID=0x3 */
+			default:
+				return false;
+		}
+		break;
+	case 0x118: /* S32K118 */
+		t->driver = "S32K118";
+		target_add_ram(t, 0x1ffffc00, 0x00000400); /* SRAM_L, 1 KB */
+		target_add_ram(t, 0x20000000, 0x00005800); /* SRAM_H, 22 KB */
+		kl_gen_add_flash(t, 0x00000000, 0x00040000, 0x800, K64_WRITE_LEN); /* P-Flash, 256 KB, 2 KB Sectors */
+		kl_gen_add_flash(t, 0x10000000, 0x00008000, 0x800, K64_WRITE_LEN); /* FlexNVM, 32 KB, 2 KB Sectors */
+		break;
+		/* gen1 s32k14x */
+		{
+			uint32_t sram_l, sram_h;
+			uint32_t flash, flexmem;
+	case 0x142: /* s32k142 */
+	case 0x143: /* s32k142w */
+		sram_l = 0x1FFFC000; /* SRAM_L, 16k */
+		sram_h = 0x03000;		 /* SRAM_H, 12k */
+		flash = 0x00040000;	 /* flash 256 KB */
+		flexmem = 0x10000;	 /* FlexNVM 64 KB */
+		goto do_common_s32k14x;
+	case 0x144: /* s32k144 */
+	case 0x145: /* s32k144w */
+		sram_l = 0x1FFF8000; /* SRAM_L, 32k */
+		sram_h = 0x07000;		 /* SRAM_H, 28k */
+		flash = 0x00080000;	 /* flash 512 KB */
+		flexmem = 0x10000;	 /* FlexNVM 64 KB */
+		goto do_common_s32k14x;
+	case 0x146: /* s32k146 */
+		sram_l = 0x1fff0000; /* SRAM_L, 64k */
+		sram_h = 0x0f000;		 /* SRAM_H, 60k */
+		flash = 0x00100000;	 /* flash 1024 KB */
+		flexmem = 0x10000;	 /* FlexNVM 64 KB */
+		goto do_common_s32k14x;
+	case 0x148: /* S32K148 */
+		sram_l = 0x1ffe0000; /* SRAM_L, 128 KB */
+		sram_h = 0x1f000;		 /* SRAM_H, 124 KB */
+		flash = 0x00180000;	 /* flash 1536 KB */
+		flexmem = 0x80000;	 /* FlexNVM 512 KB */
+		goto do_common_s32k14x;
+do_common_s32k14x:
+		t->driver = "S32K14x";
+		target_add_ram(t, sram_l, 0x20000000 - sram_l);
+		target_add_ram(t, 0x20000000, sram_h);
+
+		kl_gen_add_flash(t, 0x00000000, flash, 0x1000, K64_WRITE_LEN);	 /* P-Flash, 4 KB Sectors */
+		kl_gen_add_flash(t, 0x10000000, flexmem, 0x1000, K64_WRITE_LEN); /* FlexNVM, 4 KB Sectors */
+		break;
+		}
 	default:
 		return false;
 	}
-	unsafe_enabled = false;
+	t->unsafe_enabled = false;
 	target_add_commands(t, kinetis_cmd_list, t->driver);
 	return true;
 }
 
 static bool
-kl_gen_command(target *t, uint8_t cmd, uint32_t addr, const uint8_t data[8])
+kl_gen_command(target *t, uint8_t cmd, uint32_t addr, const uint32_t *data, int n_items)
 {
 	uint8_t fstat;
 
@@ -287,8 +390,9 @@ kl_gen_command(target *t, uint8_t cmd, uint32_t addr, const uint8_t data[8])
 	addr |= (uint32_t)cmd << 24;
 	target_mem_write32(t, FTFA_FCCOB_0, addr);
 	if (data) {
-		target_mem_write32(t, FTFA_FCCOB_1, *(uint32_t*)&data[0]);
-		target_mem_write32(t, FTFA_FCCOB_2, *(uint32_t*)&data[4]);
+		target_mem_write32(t, FTFA_FCCOB_1, data[0]);
+		if (n_items > 1)
+			target_mem_write32(t, FTFA_FCCOB_2, data[1]);
 	}
 
 	/* Enable execution by clearing CCIF */
@@ -308,7 +412,7 @@ kl_gen_command(target *t, uint8_t cmd, uint32_t addr, const uint8_t data[8])
 static int kl_gen_flash_erase(struct target_flash *f, target_addr addr, size_t len)
 {
 	while (len) {
-		if (kl_gen_command(f->t, FTFA_CMD_ERASE_SECTOR, addr, NULL)) {
+		if (kl_gen_command(f->t, FTFA_CMD_ERASE_SECTOR, addr, NULL, 0)) {
 			/* Different targets have different flash erase sizes */
 			if (len > f->blocksize)
 				len -= f->blocksize;
@@ -331,7 +435,7 @@ static int kl_gen_flash_write(struct target_flash *f,
 	struct kinetis_flash *kf = (struct kinetis_flash *)f;
 
 	/* Ensure we don't write something horrible over the security byte */
-	if (!unsafe_enabled &&
+	if (!f->t->unsafe_enabled &&
 	    (dest <= FLASH_SECURITY_BYTE_ADDRESS) &&
 	    ((dest + len) > FLASH_SECURITY_BYTE_ADDRESS)) {
 		((uint8_t*)src)[FLASH_SECURITY_BYTE_ADDRESS - dest] =
@@ -347,7 +451,7 @@ static int kl_gen_flash_write(struct target_flash *f,
 	}
 
 	while (len) {
-		if (kl_gen_command(f->t, write_cmd, dest, src)) {
+		if (kl_gen_command(f->t, write_cmd, dest, src, 1)) {
 			if (len > kf->write_len)
 				len -= kf->write_len;
 			else
@@ -365,7 +469,7 @@ static int kl_gen_flash_done(struct target_flash *f)
 {
 	struct kinetis_flash *kf = (struct kinetis_flash *)f;
 
-	if (unsafe_enabled)
+	if (f->t->unsafe_enabled)
 		return 0;
 
 	if (target_mem_read8(f->t, FLASH_SECURITY_BYTE_ADDRESS) ==
@@ -381,12 +485,13 @@ static int kl_gen_flash_done(struct target_flash *f)
 		vals[1] = target_mem_read32(f->t, FLASH_SECURITY_BYTE_ADDRESS);
 		vals[1] = (vals[1] & 0xffffff00) | FLASH_SECURITY_BYTE_UNSECURED;
 		kl_gen_command(f->t, FTFE_CMD_PROGRAM_PHRASE,
-					   FLASH_SECURITY_BYTE_ADDRESS - 4, (uint8_t*)vals);
+					   FLASH_SECURITY_BYTE_ADDRESS - 4, vals, 2);
 	} else {
-		uint32_t val = target_mem_read32(f->t, FLASH_SECURITY_BYTE_ADDRESS);
-		val = (val & 0xffffff00) | FLASH_SECURITY_BYTE_UNSECURED;
+		uint32_t vals[1];
+		vals[0] = target_mem_read32(f->t, FLASH_SECURITY_BYTE_ADDRESS);
+		vals[0] = (vals[0] & 0xffffff00) | FLASH_SECURITY_BYTE_UNSECURED;
 		kl_gen_command(f->t, FTFA_CMD_PROGRAM_LONGWORD,
-					   FLASH_SECURITY_BYTE_ADDRESS, (uint8_t*)&val);
+					   FLASH_SECURITY_BYTE_ADDRESS, vals, 1);
 	}
 
 	return 0;
@@ -455,13 +560,12 @@ void kinetis_mdm_probe(ADIv5_AP_t *ap)
 
 /* This is needed as a separate command, as there's no way to  *
  * tell a KE04 from other kinetis in kinetis_mdm_probe()       */
-static bool ke04_mode = false;
 static bool kinetis_mdm_cmd_ke04_mode(target *t, int argc, const char **argv)
 {
 	(void)argc;
 	(void)argv;
 	/* Set a flag to ignore part of the status and assert reset */
-	ke04_mode = true;
+	t->ke04_mode = true;
 	tc_printf(t, "Mass erase for KE04 now allowed\n");
 	return true;
 }
@@ -472,7 +576,7 @@ static bool kinetis_mdm_cmd_erase_mass(target *t, int argc, const char **argv)
 	ADIv5_AP_t *ap = t->priv;
 
 	/* Keep the MCU in reset as stated in KL25PxxM48SF0RM */
-	if(ke04_mode)
+	if(t->ke04_mode)
 		adiv5_ap_write(ap, MDM_CONTROL, MDM_CONTROL_SYS_RESET);
 
 	uint32_t status, control;
@@ -481,13 +585,13 @@ static bool kinetis_mdm_cmd_erase_mass(target *t, int argc, const char **argv)
 	tc_printf(t, "Requesting mass erase (status = 0x%"PRIx32")\n", status);
 
 	/* This flag does not exist on KE04 */
-	if (!(status & MDM_STATUS_MASS_ERASE_ENABLED) && !ke04_mode) {
+	if (!(status & MDM_STATUS_MASS_ERASE_ENABLED) && !t->ke04_mode) {
 		tc_printf(t, "ERROR: Mass erase disabled!\n");
 		return false;
 	}
 
 	/* Flag is not persistent */
-	ke04_mode = false;
+	t->ke04_mode = false;
 
 	if (!(status & MDM_STATUS_FLASH_READY)) {
 		tc_printf(t, "ERROR: Flash not ready!\n");

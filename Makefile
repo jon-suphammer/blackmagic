@@ -5,15 +5,7 @@ endif
 
 PC_HOSTED =
 NO_LIBOPENCM3 =
-ifeq ($(PROBE_HOST), libftdi)
-	PC_HOSTED = true
-	NO_LIBOPENCM3 = true
-endif
-ifeq ($(PROBE_HOST), pc-stlinkv2)
-	PC_HOSTED = true
-	NO_LIBOPENCM3 = true
-endif
-ifeq ($(PROBE_HOST), pc-hosted)
+ifeq ($(PROBE_HOST), hosted)
 	PC_HOSTED = true
 	NO_LIBOPENCM3 = true
 endif
@@ -25,7 +17,7 @@ ifndef NO_LIBOPENCM3
 		git submodule init ;\
 		git submodule update ;\
 	fi
-	$(Q)$(MAKE) $(MFLAGS) -C libopencm3 lib
+	$(Q)$(MAKE) $(MFLAGS) -C libopencm3 lib/stm32/f1 lib/stm32/f4 lib/lm4f
 endif
 	$(Q)$(MAKE) $(MFLAGS) -C src
 

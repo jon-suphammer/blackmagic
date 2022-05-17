@@ -22,6 +22,7 @@
  * programming.
  *
  * Tested with
+ * * SAMD09D14A (rev B)
  * * SAMD20E17A (rev C)
  * * SAMD20J18A (rev B)
  * * SAMD21J18A (rev B)
@@ -128,7 +129,7 @@ const struct command_s samd_cmd_list[] = {
 #define SAMD_STATUSB_PROT		(1 << 16)
 
 /* Device Identification Register (DID) */
-#define SAMD_DID_MASK			0xFF3C0000
+#define SAMD_DID_MASK			0xFF380000
 #define SAMD_DID_CONST_VALUE		0x10000000
 #define SAMD_DID_DEVSEL_MASK		0xFF
 #define SAMD_DID_DEVSEL_POS		0
@@ -341,6 +342,8 @@ struct samd_descr {
 	uint8_t series;
 	char revision;
 	char pin;
+	uint32_t ram_size;
+	uint32_t flash_size;
 	uint8_t mem;
 	char variant;
 	char package[3];
@@ -351,6 +354,8 @@ struct samd_descr samd_parse_device_id(uint32_t did)
 	uint8_t i = 0;
 	const struct samd_part *parts = samd_d21_parts;
 	memset(samd.package, 0, 3);
+	samd.ram_size = 0x8000;
+	samd.flash_size = 0x40000;
 
 	uint8_t family = (did >> SAMD_DID_FAMILY_POS)
 	  & SAMD_DID_FAMILY_MASK;
@@ -380,6 +385,7 @@ struct samd_descr samd_parse_device_id(uint32_t did)
 			}
 			break;
 		case 3: samd.series = 11; break;
+		case 4: samd.series = 9; break;
 		default: samd.series = 0; break;
 	}
 	/* Revision */
@@ -419,6 +425,23 @@ struct samd_descr samd_parse_device_id(uint32_t did)
 		samd.mem = 14 - (devsel % 3);
 		samd.variant = 'A';
 		break;
+	case 9: /* SAM D09 */
+		samd.ram_size = 4096;
+		switch (devsel) {
+			case 0:
+				samd.pin = 'D';
+				samd.mem = 14;
+				samd.flash_size = 16384;
+				samd.package[0] = 'M';
+				break;
+			case 7:
+				samd.pin = 'C';
+				samd.mem = 13;
+				samd.flash_size = 8192;
+				break;
+		}
+		samd.variant = 'A';
+		break;
 	}
 
 	return samd;
@@ -441,7 +464,10 @@ static void samd_add_flash(target *t, uint32_t addr, size_t length)
 	target_add_flash(t, f);
 }
 
-static char samd_variant_string[60];
+struct samd_priv_s {
+	char samd_variant_string[60];
+};
+
 bool samd_probe(target *t)
 {
 	ADIv5_AP_t *ap = cortexm_ap(t);
@@ -460,6 +486,9 @@ bool samd_probe(target *t)
 	if ((did & SAMD_DID_MASK) != SAMD_DID_CONST_VALUE)
 		return false;
 
+	struct samd_priv_s *priv_storage = calloc(1, sizeof(*priv_storage));
+	t->target_storage = (void*)priv_storage;
+
 	uint32_t ctrlstat = target_mem_read32(t, SAMD_DSU_CTRLSTAT);
 	struct samd_descr samd = samd_parse_device_id(did);
 
@@ -468,15 +497,15 @@ bool samd_probe(target *t)
 
 	/* Part String */
 	if (protected) {
-		sprintf(samd_variant_string,
-		        "Atmel SAM%c%d%c%d%c%s (rev %c) (PROT=1)",
+		sprintf(priv_storage->samd_variant_string,
+		        "Atmel SAM%c%02d%c%d%c%s (rev %c) (PROT=1)",
 		        samd.family,
 		        samd.series, samd.pin, samd.mem,
 		        samd.variant,
 		        samd.package, samd.revision);
 	} else {
-		sprintf(samd_variant_string,
-		        "Atmel SAM%c%d%c%d%c%s (rev %c)",
+		sprintf(priv_storage->samd_variant_string,
+		        "Atmel SAM%c%02d%c%d%c%s (rev %c)",
 		        samd.family,
 		        samd.series, samd.pin, samd.mem,
 		        samd.variant,
@@ -484,7 +513,7 @@ bool samd_probe(target *t)
 	}
 
 	/* Setup Target */
-	t->driver = samd_variant_string;
+	t->driver = priv_storage->samd_variant_string;
 	t->reset = samd_reset;
 
 	if (samd.series == 20 && samd.revision == 'B') {
@@ -507,8 +536,8 @@ bool samd_probe(target *t)
 		t->attach = samd_protected_attach;
 	}
 
-	target_add_ram(t, 0x20000000, 0x8000);
-	samd_add_flash(t, 0x00000000, 0x40000);
+	target_add_ram(t, 0x20000000, samd.ram_size);
+	samd_add_flash(t, 0x00000000, samd.flash_size);
 	target_add_commands(t, samd_cmd_list, "SAMD");
 
 	/* If we're not in reset here */
@@ -686,11 +715,45 @@ static bool samd_set_flashlock(target *t, uint16_t value, const char **argv)
 	return true;
 }
 
+static bool parse_unsigned(const char *s, uint32_t *val)
+{
+	int l, st;
+	unsigned long num;
+
+	l = strlen(s);
+	// TODO: port to use substrate::toInt_t<> style parser for robustness and smaller code size
+	if (l > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
+		st = sscanf(s + 2, "%lx", &num);
+	else
+		st = sscanf(s, "%lu", &num);
+
+	if (st < 1)
+		return false;
+
+	*val = (uint32_t)num;
+	return true;
+}
+
 static bool samd_cmd_lock_flash(target *t, int argc, const char **argv)
 {
-	(void)argc;
-	(void)argv;
-	return samd_set_flashlock(t, 0x0000, NULL);
+	if (argc > 2) {
+		tc_printf(t, "usage: monitor lock_flash [number]\n");
+		return false;
+	} else if (argc == 2) {
+		uint32_t val = 0;
+		if (!parse_unsigned(argv[1], &val)) {
+			tc_printf(t, "number must be either decimal or 0x prefixed hexadecimal\n");
+			return false;
+		}
+
+		if (val > 0xffffu) {
+			tc_printf(t, "number must be between 0 and 65535\n");
+			return false;
+		}
+
+		return samd_set_flashlock(t, (uint16_t)val, NULL);
+	} else
+		return samd_set_flashlock(t, 0x0000, NULL);
 }
 
 static bool samd_cmd_unlock_flash(target *t, int argc, const char **argv)
@@ -735,9 +798,25 @@ static bool samd_set_bootprot(target *t, uint16_t value, const char **argv)
 
 static bool samd_cmd_lock_bootprot(target *t, int argc, const char **argv)
 {
-	(void)argc;
-	(void)argv;
-	return samd_set_bootprot(t, 0, NULL);
+	/* locks first 0x7 .. 0, 0x6 .. 512, 0x5 .. 1024, ..., 0x0 .. 32768 bytes of flash*/
+	if (argc > 2) {
+		tc_printf(t, "usage: monitor lock_bootprot [number]\n");
+		return false;
+	} else if (argc == 2) {
+		uint32_t val = 0;
+		if (!parse_unsigned(argv[1], &val)) {
+			tc_printf(t, "number must be either decimal or 0x prefixed hexadecimal\n");
+			return false;
+		}
+
+		if (val > 7) {
+			tc_printf(t, "number must be between 0 and 7\n");
+			return false;
+		}
+
+		return samd_set_bootprot(t, (uint16_t)val, NULL);
+	} else
+		return samd_set_bootprot(t, 0, NULL);
 }
 
 static bool samd_cmd_unlock_bootprot(target *t, int argc, const char **argv)
@@ -847,8 +926,9 @@ static bool samd_cmd_ssb(target *t, int argc, const char **argv)
 		if (target_check_error(t))
 			return -1;
 
-	tc_printf(t, "Set the security bit! "
-		  "You will need to issue 'monitor erase_mass' to clear this.\n");
+	tc_printf(t, "Security bit set! "
+		  "Scan again, attach and issue 'monitor erase_mass' to reset.\n");
 
+	target_reset(t);
 	return true;
 }
