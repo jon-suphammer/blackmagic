@@ -2,6 +2,13 @@
 # ESP32 target,
 
 This provides a wifi based, debug probe on the esp32
+NOTE!! Not tested with latest changes!
+Could be better to implement this instead,
+   uint32_t platform_max_frequency_get(void)
+   {
+	return 0;
+   }
+
 
 # Build
 

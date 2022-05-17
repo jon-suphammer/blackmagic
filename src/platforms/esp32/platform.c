@@ -42,11 +42,43 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+uint32_t swd_delay_cnt = 0;
+
+
 //#include <dhcpserver.h>
 
 //#define ACCESS_POINT_MODE
 #define AP_SSID	 "blackmagic"
 #define AP_PSK	 "blackmagic"
+
+
+
+/* Values for STM32F103 at 72 MHz */
+#define USED_SWD_CYCLES 22
+#define CYCLES_PER_CNT 10
+void platform_max_frequency_set(uint32_t freq)
+{
+	int rcc_ahb_frequency = 240*1024*1024;
+	int divisor = rcc_ahb_frequency - USED_SWD_CYCLES * freq;
+	if (divisor < 0) {
+		swd_delay_cnt = 0;
+		return;
+	}
+	divisor /= 2;
+	swd_delay_cnt = divisor/(CYCLES_PER_CNT * freq);
+	if ((swd_delay_cnt * (CYCLES_PER_CNT * freq)) < (unsigned int)divisor)
+		swd_delay_cnt++;
+}
+
+uint32_t platform_max_frequency_get(void)
+{
+	int rcc_ahb_frequency = 240*1024*1024;
+	uint32_t ret = rcc_ahb_frequency;
+	ret /= USED_SWD_CYCLES + CYCLES_PER_CNT * swd_delay_cnt;
+	return ret;
+}
+
+
 
 //  | (1<<MY_DEBUG_PIN)
 #define GPIO_OUTPUT_PIN_SEL  ((1<<SWCLK_PIN) | (1<<SWDIO_PIN) | (1<<TMS_PIN) | (1<<TDI_PIN) | (1<<TDO_PIN) | (1<<TCK_PIN))

@@ -22,6 +22,7 @@
 #define __PLATFORM_H
 
 #define BOARD_IDENT             "ESP32 Black Magic Probe"
+#define PLATFORM_IDENT          " (ESP32))"
 
 #undef PRIx32
 #define PRIx32 "x"
@@ -66,6 +67,9 @@
 
 // Allow debugging by toggling the pin
 //#define MY_DEBUG_PIN (12)
+
+extern uint32_t swd_delay_cnt;
+
 
 
 #define gpio_set_val(port, pin, value) do {	\

@@ -70,14 +70,23 @@ set(TARGETS
 ../../target/msp432.c       
 ../../target/sam4l.c     
 ../../target/stm32f1.c   
+../../target/stm32l0.c
 ../../target/stm32l4.c
 ../../target/adiv5_swdp.c     
 ../../target/efm32.c     
 ../../target/jtag_scan.c   
 ../../target/lmi.c               
 ../../target/lpc43xx.c   
+../../target/lpc546xx.c   
 ../../target/nrf51.c         
 ../../target/stm32f4.c   
+../../target/stm32g0.c   
+../../target/rp.c
+../../target/sam3x.c
+../../target/sam4l.c
+../../target/samx5x.c
+../../target/stm32h7.c
+../../target/ch32f1.c
 #../../target/swdptap_generic.c
 )
 
