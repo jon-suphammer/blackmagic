@@ -18,6 +18,27 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/* AtomU definitions
+
+GROVE
+.---.
+| 4 | GPIO32 - SWCLK
+| 3 | GPIO26 - SWDIO
+| 2 | +5V
+| 1 | GND
+'---'
+
+JP1
+.---.
+| 6 | GPIO21 - TMS
+| 5 | GPIO22 - TDI
+| 4 | GPIO33 - TDO
+| 3 | GPIO25 - TMS
+| 2 | +5V
+| 1 | GND
+'---'
+*/
+
 #ifndef __PLATFORM_H
 #define __PLATFORM_H
 
@@ -47,10 +68,10 @@
 
 #if 1
 
-#define TMS_PIN (17) 
-#define TDI_PIN (13) 
-#define TDO_PIN (14) 
-#define TCK_PIN (16) 
+#define TMS_PIN (25)
+#define TDI_PIN (33)
+#define TDO_PIN (22)
+#define TCK_PIN (21)
 
 
 #undef PLATFORM_HAS_TRACESWO 
@@ -62,8 +83,8 @@
 // ON ESP32 we dont have the PORTS, this is dummy value until code is corrected
 #define SWCLK_PORT  0
 
-#define SWDIO_PIN (14)
-#define SWCLK_PIN (13)
+#define SWDIO_PIN (26)
+#define SWCLK_PIN (32)
 
 // Allow debugging by toggling the pin
 //#define MY_DEBUG_PIN (12)
